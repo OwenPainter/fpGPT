@@ -42,7 +42,7 @@ On-chip, `fpga_top.v` connects UART to `generation_controller.v`, which wraps
 `transformer_engine.v` and owns the unified weight ROM. The engine sequences
 `embeddings → LN1 → attention → residual → LN2 → MLP → residual → final LN →
 LM head`; the controller buffers a prompt, runs one forward pass per generated
-character, picks the argmax logit, and feeds the token back.
+character, selects the next token from the top-k logits, and feeds it back.
 
 ## What works today
 
@@ -64,37 +64,37 @@ character, picks the argmax logit, and feeds the token back.
   forward pass in simulation and is checked bit-exactly against an independent
   Python integer reference (`tests/test_transformer_engine.py`).
 - **Board-level generation:** `generation_controller.v` implements prompt
-  buffering, character↔token mapping, greedy argmax sampling, token feedback,
-  a cycle counter, and the weight ROM; `fpga_top.v` wires it to UART. Verified
-  end-to-end in simulation by `tests/test_generation_controller.py` and
-  `tests/tb_fpga_top.v`.
+  buffering, character↔token mapping, LFSR-indexed top-k token selection
+  (`TOP_K`, default 4), token feedback, a cycle counter, and the weight ROM;
+  `fpga_top.v` wires it to UART. Verified end-to-end in simulation by
+  `tests/test_generation_controller.py` and `tests/tb_fpga_top.v`.
 - **FPGA project:** a synthesizable DE1-SoC target with a 50→150 MHz PLL
   (`pll_150.v`), a real SDC (`fpGPT.sdc`), a Quartus flow (`build.tcl`,
   `timing.tcl`), and a programming runbook (`PROGRAMMING.md`). The UART pins
   (GPIO_0[0:1]) are verified against the DE1-SoC pin table.
 - **Throughput harness:** `tests/test_throughput.py` measures cycles/token in
-  RTL and reports tok/s at 50 and 150 MHz. Measured baseline for the default
-  shape (d_model=64, 4 layers): **963,686 cycles/token → 51.9 tok/s @ 50 MHz,
-  155.7 tok/s @ 150 MHz** (no KV cache, one full forward pass per token).
+  RTL and reports tok/s at 50 and 150 MHz (the default shape is gated behind
+  `FPGPT_THROUGHPUT_DEFAULT=1`).
 - **Attention verification:** `tests/test_attention.py` passes under Icarus
   Verilog.
 
 ## What is not done
 
-- Quartus has **not** been run: there is no synthesis/fit, no timing closure,
-  no recorded area, and no `.sof`. `build.tcl`/`timing.tcl` and the SDC are in
-  place, but the 150 MHz target is unverified and likely misses (the
-  combinational dividers are the suspected critical path).
+- Quartus has **not** been run: no synthesis/fit, no timing closure, no area,
+  and no `.sof`. `build.tcl`/`timing.tcl` and the SDC are in place, but the
+  150 MHz target is unverified and may miss (the combinational dividers are the
+  suspected critical path).
 - The board has never been programmed or brought up; `PROGRAMMING.md` is the
   runbook, not a report.
 - `compile.py` emits a uniform-width engine image
   (`build/weights/engine/weights_unified.hex`) and `build/rtl/board_params.vh`,
-  which `fpga_top.v` consumes. Numerical agreement between that engine image
-  and the fixed-point contract is still being validated.
-- `hdl/gpt_controller.v` and `hdl/transformer_block.v` are unused stubs and are
-  not in the Quartus project.
-- There is no KV cache (each token recomputes the whole sequence), no
-  temperature/top-k sampling, and no output backpressure for the slower UART.
+  which `fpga_top.v` consumes. Numerical agreement between that engine image and
+  the fixed-point contract is still approximate (global shifts vs per-layer,
+  8-bit vs accumulator-domain biases); see
+  [docs/fixed_point.md](docs/fixed_point.md#integration-status).
+- `hdl/gpt_controller.v` and `hdl/transformer_block.v` have been deleted.
+- Sampling is LFSR-indexed top-k only (no temperature), and there is no output
+  backpressure for the slower UART.
 - The `UART_TXD`/`UART_RXD` pins are on GPIO_0 and need an external 3.3 V
   USB-TTL adapter; the onboard USB-UART belongs to the HPS.
 
@@ -184,10 +184,10 @@ fpGPT/
 ├── model/
 │   ├── micro_gpt.py           # Character-level GPT + tokenizer
 │   ├── train.py               # Training script
-│   ├── fixed_point.py         # Integer-reference forward pass
+│   ├── fixed_point.py         # Integer-reference forward pass + block emulator
 │   └── validate_fixed.py      # Fixed vs PyTorch RMSE/error CLI
 ├── hdl/
-│   ├── attention.v            # Causal multi-head attention (verified)
+│   ├── attention.v            # Causal multi-head attention, per-layer KV cache (verified)
 │   ├── dense_layer.v          # Time-multiplexed linear engine
 │   ├── layer_norm.v           # Sequential integer LayerNorm
 │   ├── mac_unit.v             # DSP MAC primitive
@@ -197,14 +197,12 @@ fpGPT/
 │   ├── fixed_layer_norm.v     # Exact-scale LayerNorm operator
 │   ├── fixed_residual.v       # Scale-aligning residual add
 │   ├── fixed_gelu.v           # Table-based GELU
-│   ├── transformer_engine.v   # Full forward-pass sequencer (verified)
-│   ├── transformer_block.v    # Unused STUB
-│   └── gpt_controller.v       # Unused STUB (UART echo)
+│   └── transformer_engine.v   # Full forward-pass sequencer (verified)
 ├── fpga/
 │   ├── fpga_top.v             # DE1-SoC top level (UART ↔ controller, PLL)
-│   ├── generation_controller.v# Prompt buffer, argmax, token feedback, ROM
+│   ├── generation_controller.v# Prompt buffer, top-k/argmax, feedback, ROM
 │   ├── pll_150.v              # 50→150 MHz altera_pll wrapper
-│   ├── board_params.vh        # Generated BOARD_*/ENGINE_* localparams
+│   ├── board_params.vh        # Generated FPGPT_* board macro contract
 │   ├── uart_rx.v, uart_tx.v
 │   ├── fpGPT.qpf/.qsf/.sdc    # Quartus project, pins, timing constraints
 │   ├── build.tcl, timing.tcl  # Non-interactive build + STA
@@ -214,10 +212,9 @@ fpGPT/
 │   ├── test_transformer_engine.py   # Full-pass RTL test
 │   ├── test_generation_controller.py# Board-level end-to-end RTL test
 │   ├── test_throughput.py           # cycles/token + tok/s harness
+│   ├── test_tokenizer.py            # Tokenizer ↔ hardware mapping contract
 │   ├── test_fixed_point.py          # Numeric contract / integer reference
-│   ├── test_transformer_block.py    # pytest; emulator smoke test
 │   └── tb_fpga_top.v                # UART board smoke test (tiny model)
-│   └── tb_transformer_block.v       # Legacy stub testbench
 ├── docs/
 │   └── fixed_point.md         # Numeric contract and integration guide
 └── hdl/attention.md           # Attention interface and numeric contract
@@ -227,7 +224,7 @@ fpGPT/
 
 | Parameter | Value | Notes |
 | --- | --- | --- |
-| Vocab size | 64 | Printable ASCII subset |
+| Vocab size | 98 | 3 specials + full printable ASCII (32–126) |
 | Context length | 64 | Tokens per inference window |
 | d_model | 64 | Embedding dimension |
 | Attention heads | 4 | Head dim = 16 |
@@ -244,7 +241,7 @@ fpGPT/
   (Python tests still run without them). `make test-python`, `make test-hdl`
   and `make test-board` run the pieces individually.
 - `python3 -m unittest tests.test_attention -v` — attention RTL vs an
-  independent integer reference. **Passes** (requires `iverilog`/`vvp`).
+  independent integer reference. Requires `iverilog`/`vvp`; skips otherwise.
 - `python3 -m unittest tests.test_transformer_engine -v` — full forward pass in
   RTL vs a Python integer model.
 - `python3 -m unittest tests.test_generation_controller -v` — UART-style prompt
@@ -252,11 +249,13 @@ fpGPT/
   reference. Exercises the whole board datapath in simulation.
 - `python3 -m unittest tests.test_throughput -v` — runs a generation burst in
   RTL, counts cycles, and prints tok/s at 50/150 MHz. Set
-  `FPGPT_THROUGHPUT_DEFAULT=1` to measure the default model shape (~3.7 s in
-  Icarus; reports 963,686 cycles/token).
+  `FPGPT_THROUGHPUT_DEFAULT=1` to measure the default model shape.
 - `iverilog ... tests/tb_fpga_top.v` — UART board smoke test with a tiny
   zeroed model; the run command is in the file header.
-- `python3 -m unittest discover -s tests -v` — collects everything.
+- `python3 -m unittest discover -s tests -v` — collects everything, including
+  `test_fixed_point.py` (integer-reference vs PyTorch and RTL checks). It must
+  be run through `discover` because it imports `test_attention` by module name;
+  RTL tests skip when `iverilog`/`vvp` are not on `PATH`.
 - `pytest tests/` — `pytest` is pinned in `requirements.txt`; the suite also
   runs under `unittest`.
 
@@ -286,9 +285,13 @@ fpGPT/
       (8-bit sign-extended biases, 8-bit LayerNorm params) with the compiler's
       mixed-width ROM (64-bit biases, 32-bit Q14 gamma / 32-bit beta); a
       uniform-width engine image is emitted and consumed today, but numerical
-      agreement and per-layer shifts still need validation
-- [x] Emit board parameters (`ROM_DEPTH`, `W_ADDR_WIDTH`, shifts) from
-      `compile.py` (`build/rtl/board_params.vh`), consumed by `fpga_top.v`
+      agreement, per-layer shifts and accumulator-domain biases still need
+      validation/wiring
+- [x] Emit board parameters (`ROM_DEPTH`, `W_ADDR_WIDTH`, shifts) and the
+      uniform-width engine image from `compile.py` (`build/rtl/board_params.vh`,
+      consumed by `fpga_top.v`)
+- [ ] Emit a configured `generation_controller` wrapper and wire it into
+      `fpga_top.v` instead of hand-maintained defaults
 
 ### RTL and system integration
 - [x] `attention.v`: full causal multi-head attention
@@ -297,15 +300,15 @@ fpGPT/
 - [x] `fixed_linear.v`, `fixed_layer_norm.v`, `fixed_residual.v`,
       `fixed_gelu.v`
 - [x] `transformer_engine.v`: complete forward-pass sequencer
-- [x] `generation_controller.v`: prompt buffer, byte↔token mapping, greedy
-      argmax, token feedback, weight ROM
+- [x] `generation_controller.v`: prompt buffer, byte↔token mapping, top-k
+      selection, token feedback, weight ROM
 - [x] `fpga_top.v` wired to `generation_controller` over UART
-- [ ] Delete or repurpose the unused `transformer_block.v` and
-      `gpt_controller.v` stubs
+- [x] Delete the unused `transformer_block.v` and `gpt_controller.v` stubs
 - [ ] Add output buffering/backpressure (UART TX is slower than the engine)
-- [ ] Add a KV cache / incremental decoding (the engine recomputes the whole
-      sequence for every token)
-- [ ] Add sampling (temperature/top-k) instead of always greedy argmax
+- [x] Per-layer KV cache / incremental decoding in `attention.v` +
+      `transformer_engine.v` (decode only processes the new token)
+- [x] LFSR-indexed top-k sampling in `generation_controller.v` (verified)
+- [ ] Add temperature control and finish the sampling policy
 - [ ] Define and document a stable UART/host protocol (prompt framing,
       generation length, status)
 
@@ -331,11 +334,13 @@ fpGPT/
 - [x] Full forward-pass RTL test (`test_transformer_engine.py`)
 - [x] Board-level end-to-end RTL test (`test_generation_controller.py`)
 - [x] Board UART smoke test updated for the engine (`tb_fpga_top.v`)
-- [x] Throughput harness (`test_throughput.py`) with a measured baseline
-- [ ] Replace or delete the legacy `tb_transformer_block.v`
+- [x] Throughput harness (`test_throughput.py`)
+- [x] Restore `tests/test_fixed_point.py` collection (integer-reference vs
+      PyTorch / RTL)
 - [x] Add `pytest` to `requirements.txt`
 - [x] Elaborate the PLL/board top in CI without Quartus
       (`test_board_top_elaborates_with_pll`, via the `altera_pll` stub)
+- [ ] Replace or delete the orphaned `tb_transformer_block.v`
 - [ ] Add CI that installs `torch` and `iverilog` and runs the full suite
 - [ ] Add an end-to-end test from checkpoint → compiled ROM → board RTL
 

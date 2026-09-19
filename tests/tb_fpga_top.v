@@ -38,6 +38,7 @@ module tb_fpga_top;
     fpga_top #(
         .ROM_MEM_FILE("no_such_file.hex"),
         .GEN_TOKENS(1),
+        .TOP_K(1),
         .CLK_FREQ(50000000),
         .BAUD_RATE(115200)
     ) dut (

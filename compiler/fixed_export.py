@@ -76,7 +76,8 @@ def export_fixed(ir, output_dir):
         settings = dict(DATA_WIDTH=ir.bit_width, D_MODEL=ir.d_model, NUM_HEADS=ir.num_heads,
                         MAX_SEQ_LEN=ir.max_seq_len, Q_SHIFT=a.q_proj.requant_shift,
                         K_SHIFT=a.k_proj.requant_shift, V_SHIFT=a.v_proj.requant_shift,
-                        OUT_SHIFT=a.out_proj.requant_shift, SCORE_MULT=a.score_mult, SCORE_SHIFT=a.score_shift)
+                        OUT_SHIFT=a.out_proj.requant_shift, SCORE_MULT=a.score_mult,
+                        SCORE_SHIFT=a.score_shift)
         manifest['attention'][a.name] = settings
         for name, value in settings.items():
             lines.append(f'localparam BLOCK{i}_ATTENTION_{name} = {value};')
@@ -97,11 +98,19 @@ def export_fixed(ir, output_dir):
             'output wire busy, done, error, y_valid', f'output wire [{xw-1}:0] y_addr',
             f'output wire signed [{ir.bit_width-1}:0] y_data']
         ports = 'clk rst_n x_load w_load b_load start x_load_addr w_load_addr b_load_addr x_load_data w_load_data b_load_data seq_len busy done error y_valid y_addr y_data'.split()
+        # The fixed-contract wrappers run one block in isolation, so the
+        # KV-cache controls are tied off (full-sequence prefill, layer 0).
+        # NUM_LAYERS configures the cache array size but is not part of the
+        # frozen manifest.
+        li_w = max(1, (ir.num_layers - 1).bit_length())
+        core_params = list(settings.items()) + [('NUM_LAYERS', ir.num_layers)]
+        connections = [f'.{p}({p})' for p in ports] + [
+            f".cache_len({lw}'d0)", f".layer_idx({li_w}'d0)"]
         (rtl/f'attention_block{i}.v').write_text(
             f'// Generated fixed-point settings; host supplies the loading protocol.\nmodule attention_block{i}(\n    '+
             ',\n    '.join(declarations)+'\n);\nattention #(\n    '+
-            ',\n    '.join(f'.{k}({v})' for k,v in settings.items())+') core (\n    '+
-            ',\n    '.join(f'.{p}({p})' for p in ports)+'\n);\nendmodule\n')
+            ',\n    '.join(f'.{k}({v})' for k,v in core_params)+') core (\n    '+
+            ',\n    '.join(connections)+'\n);\nendmodule\n')
         fin, fout = ir.formats[f'block{i}_fc1'], ir.formats[f'block{i}_gelu']
         filename = f'block{i}_gelu.hex'
         table = gelu_table(ir.bit_width, fin, fout)

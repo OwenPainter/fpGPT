@@ -178,6 +178,7 @@ module tb;
 reg clk=0; always #5 clk=~clk;
 reg rst_n=0, start=0, tok_load=0;
 reg [{len_w-1}:0] seq_len=0;
+reg [{len_w-1}:0] cache_len=0;
 reg [{tok_aw-1}:0] tok_addr=0;
 reg [{voc_aw-1}:0] tok_data=0;
 wire busy, done, error, logits_valid;

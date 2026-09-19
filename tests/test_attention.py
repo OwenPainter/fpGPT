@@ -76,6 +76,8 @@ reg [{max(1, (4*dim-1).bit_length())-1}:0] b_load_addr=0;
 reg signed [{width-1}:0] x_load_data=0, w_load_data=0;
 reg signed [63:0] b_load_data=0;
 reg [{maximum.bit_length()-1}:0] seq_len=0;
+reg [{maximum.bit_length()-1}:0] cache_len=0;
+reg [1:0] layer_idx=0;
 wire busy, done, error, y_valid;
 wire [{max(1, (maximum*dim-1).bit_length())-1}:0] y_addr;
 wire signed [{width-1}:0] y_data;

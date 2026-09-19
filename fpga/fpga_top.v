@@ -21,6 +21,7 @@
 module fpga_top #(
     parameter ROM_MEM_FILE = "weights_unified.hex",
     parameter GEN_TOKENS   = 16,
+    parameter TOP_K        = 4,
     parameter CLK_FREQ     = 150_000_000,
     parameter BAUD_RATE    = 115200,
     parameter LN_SHIFT     = 7
@@ -120,7 +121,8 @@ module fpga_top #(
         .W_ADDR_WIDTH(BOARD_W_ADDR_WIDTH),
         .ROM_DEPTH(BOARD_ROM_DEPTH),
         .ROM_MEM_FILE(ROM_MEM_FILE),
-        .GEN_TOKENS(GEN_TOKENS)
+        .GEN_TOKENS(GEN_TOKENS),
+        .TOP_K(TOP_K)
     ) controller_inst (
         .clk(clk_sys),
         .rst_n(rst_n),
