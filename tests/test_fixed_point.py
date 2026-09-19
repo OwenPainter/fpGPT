@@ -123,6 +123,34 @@ class NumericTests(unittest.TestCase):
                                 'fixed_layer_norm.v','fixed_residual.v','fixed_gelu.v')],check=True)
 
 
+    def test_engine_image_and_board_params(self):
+        from compile import _write_board_params
+        model, ir = tiny(8)
+        ir_engine = quantize_model(model, model.config, 8, engine_compatible=True)
+        # The engine path keeps every tensor at the model bit width.
+        for t in (ir_engine.token_embedding.weights,
+                  ir_engine.position_embedding.weights,
+                  ir_engine.blocks[0].attention.q_proj.weights,
+                  ir_engine.blocks[0].attention.q_proj.bias,
+                  ir_engine.blocks[0].ln1.gamma,
+                  ir_engine.blocks[0].ln1.beta,
+                  ir_engine.lm_head.weights):
+            self.assertEqual(t.bit_width, 8)
+        self.assertEqual(ir_engine.total_weight_bytes, ir_engine.total_params)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            export_all_weights(ir_engine, root/'weights/engine', fmt='hex', unified_only=True)
+            image = bytes(int(x, 16) for x in
+                          (root/'weights/engine/weights_unified.hex').read_text().split())
+            self.assertEqual(len(image), ir_engine.total_weight_bytes)
+            self.assertEqual(image[0], int(ir_engine.token_embedding.weights.data.flat[0]) & 0xFF)
+            _write_board_params(ir, ir_engine, root/'board_params.vh')
+            text = (root/'board_params.vh').read_text()
+            self.assertIn(f'BOARD_ROM_DEPTH    = {ir_engine.total_weight_bytes};', text)
+            self.assertIn(f'BOARD_D_MODEL      = {model.config["d_model"]};', text)
+            self.assertIn('ENGINE_Q_SHIFT', text)
+
+
 @unittest.skipUnless(shutil.which('iverilog') and shutil.which('vvp'), 'requires Icarus Verilog')
 class RtlNumericTests(unittest.TestCase):
     def test_linear_rtl(self):

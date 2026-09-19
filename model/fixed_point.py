@@ -6,6 +6,8 @@ transformer block (Attention + MLP) using the exact same fixed-point INT8
 math and scaling operations implemented in Verilog.
 """
 
+import math
+from functools import lru_cache
 import numpy as np
 
 def clamp_int8(val):
@@ -207,3 +209,127 @@ class FixedPointTransformerBlock:
         x_out = np.clip(x_res1.astype(np.int32) + mlp_out.astype(np.int32), -128, 127).astype(np.int8)
         
         return x_out
+
+# ========================================================================
+# Integer-reference API used by model/validate_fixed.py and
+# tests/test_fixed_point.py. Bit-exact mirror of the compiler's
+# binary-scale IR arithmetic (see docs/fixed_point.md).
+# ========================================================================
+
+def trunc_div(a, b):
+    if b <= 0:
+        raise ValueError('positive divisor required')
+    return (1 if a >= 0 else -1) * (abs(int(a)) // int(b))
+
+
+def shift(value, bits):
+    return int(value) >> bits if bits >= 0 else int(value) << -bits
+
+
+def clip(value, width):
+    return max(-(1 << (width-1)), min((1 << (width-1))-1, int(value)))
+
+
+def rescale(data, fin, fout, width):
+    a = np.asarray(data)
+    return np.array([clip(shift(v, fin-fout), width) for v in a.flat], dtype=np.int64).reshape(a.shape)
+
+
+def residual(a, fa, b, fb, fout, width):
+    # Align at the finer input/output scale and saturate only after addition.
+    common = max(fa, fb, fout)
+    a, b = np.asarray(a), np.asarray(b)
+    if a.shape != b.shape:
+        raise ValueError('residual shape mismatch')
+    return np.array([clip(shift((int(x) << (common-fa)) + (int(y) << (common-fb)), common-fout), width)
+                     for x, y in zip(a.flat, b.flat)], dtype=np.int64).reshape(a.shape)
+
+
+def linear(x, layer, width):
+    acc = np.asarray(x, dtype=np.int64) @ layer.weights.data.astype(np.int64).T
+    if layer.bias is not None:
+        acc += layer.bias.data
+    return rescale(acc, layer.input_frac+layer.weights.shift_bits, layer.output_frac, width)
+
+
+def layer_norm(x, layer, width):
+    result = []
+    for row in np.asarray(x):
+        n = len(row)
+        mean = trunc_div(sum(int(v) << 8 for v in row), n)
+        centered = [(int(v) << 8)-mean for v in row]
+        variance = sum(v*v for v in centered)//n
+        std = math.isqrt(variance + layer.epsilon_int)
+        norm = [trunc_div(v << 14, std) for v in centered]
+        result.append([clip(shift(v*int(g), 28-layer.output_frac)+int(b), width)
+                       for v, g, b in zip(norm, layer.gamma.data, layer.beta.data)])
+    return np.array(result, dtype=np.int64)
+
+
+@lru_cache(maxsize=32)
+def gelu_table(width, fin, fout):
+    limit = 1 << (width-1)
+    # Address is the input's unsigned two's-complement bit pattern.
+    def entry(i):
+        x = (i if i < limit else i-2*limit) * 2.0**-fin
+        return clip(round(0.5*x*(1+math.erf(x/math.sqrt(2))) * 2**fout), width)
+    return np.array([entry(i) for i in range(2*limit)], dtype=np.int64)
+
+
+EXP_TABLE = tuple(round(32768*math.exp(-i/4)) for i in range(33))
+
+
+def attention(x, layer, width):
+    q, k, v = [linear(x, p, width) for p in (layer.q_proj, layer.k_proj, layer.v_proj)]
+    context = np.zeros_like(v)
+    for t in range(len(x)):
+        for h in range(layer.num_heads):
+            channels = range(h*layer.head_dim, (h+1)*layer.head_dim)
+            scores = [shift(sum(int(q[t,c])*int(k[j,c]) for c in channels)*layer.score_mult, layer.score_shift)
+                      for j in range(t+1)]
+            maximum = max(scores)
+            exps = [EXP_TABLE[maximum-s] if maximum-s <= 32 else 0 for s in scores]
+            for c in channels:
+                context[t,c] = trunc_div(sum(e*int(v[j,c]) for j,e in enumerate(exps)), sum(exps))
+    return linear(context, layer.out_proj, width)
+
+
+class FixedMicroGPT:
+    def __init__(self, ir):
+        self.ir = ir
+        self.trace = {}
+
+    def __call__(self, tokens):
+        """One sequence of token IDs -> signed integer logits [T, vocab]."""
+        ir, f, width = self.ir, self.ir.formats, self.ir.bit_width
+        tokens = np.asarray(tokens)
+        if tokens.ndim != 1 or not 1 <= len(tokens) <= ir.max_seq_len or tokens.dtype.kind not in 'iu':
+            raise ValueError('expected a nonempty 1D integer token sequence within context length')
+        if np.any(tokens < 0) or np.any(tokens >= ir.vocab_size):
+            raise ValueError('token out of vocabulary')
+        self.trace = {}
+
+        def record(name, data):
+            self.trace[name] = data.copy()
+            return data
+
+        x = record('embeddings', residual(ir.token_embedding.weights.data[tokens], f['tok_emb'],
+                   ir.position_embedding.weights.data[:len(tokens)], f['pos_emb'], f['embeddings'], width))
+        current = f['embeddings']
+        for i, b in enumerate(ir.blocks):
+            key = lambda suffix: f'block{i}_{suffix}'
+            norm = record(key('ln1'), layer_norm(x, b.ln1, width))
+            a = record(key('out'), attention(norm, b.attention, width))
+            x = record(key('res1'), residual(x, current, a, f[key('out')], f[key('res1')], width))
+            norm = record(key('ln2'), layer_norm(x, b.ln2, width))
+            hidden = record(key('fc1'), linear(norm, b.mlp_fc1, width))
+            table = gelu_table(width, f[key('fc1')], f[key('gelu')])
+            hidden = record(key('gelu'), table[hidden & ((1 << width)-1)])
+            mlp = record(key('fc2'), linear(hidden, b.mlp_fc2, width))
+            x = record(key('res2'), residual(x, f[key('res1')], mlp, f[key('fc2')], f[key('res2')], width))
+            current = f[key('res2')]
+        x = record('final_ln', layer_norm(x, ir.final_ln, width))
+        return record('logits', linear(x, ir.lm_head, width))
+
+    def dequantized(self, tokens):
+        return self(tokens).astype(np.float64)*2.0**-self.ir.formats['logits']

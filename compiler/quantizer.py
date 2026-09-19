@@ -110,7 +110,7 @@ def quantize_layer_norm(name: str, layer: nn.LayerNorm, bit_width: int = 8) -> L
 
 
 def quantize_model(model: nn.Module, config: dict, bit_width: int = 8,
-                   formats: dict = None) -> ModelIR:
+                   formats: dict = None, engine_compatible: bool = False) -> ModelIR:
     """
     Quantize an entire MicroGPT model into the compiler's IR.
 
@@ -119,6 +119,13 @@ def quantize_model(model: nn.Module, config: dict, bit_width: int = 8,
         config: Model config dict with keys: vocab_size, max_seq_len,
                 d_model, num_heads, num_layers, d_ff.
         bit_width: Target quantization bit width (8 or 16).
+        formats: Optional activation fractional-bit overrides for the fixed
+                contract.
+        engine_compatible: When True, keep every tensor at ``bit_width`` (the
+                uniform byte layout that hdl/transformer_engine.v consumes)
+                instead of the mixed-width fixed contract (64-bit biases,
+                32-bit LayerNorm parameters). The resulting IR is only for the
+                ROM-based engine path.
 
     Returns:
         A fully populated ModelIR ready for code generation.
@@ -209,10 +216,12 @@ def quantize_model(model: nn.Module, config: dict, bit_width: int = 8,
 
     ir.total_params = total_params
 
-    # Apply activation formats and accumulator-domain biases before allocation.
-    from .fixed_contract import configure
-    configure(ir, model, formats)
-    # Compute sequential byte layout (mixed-width tensors).
+    if not engine_compatible:
+        # Apply activation formats and accumulator-domain biases before allocation.
+        from .fixed_contract import configure
+        configure(ir, model, formats)
+    # Compute sequential byte layout. Engine-compatible IRs are uniform-width;
+    # fixed-contract IRs are mixed-width (see compiler/fixed_contract.py).
     ir.compute_memory_layout()
 
     return ir

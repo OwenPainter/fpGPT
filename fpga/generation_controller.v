@@ -41,7 +41,7 @@ module generation_controller #(
 
     parameter W_ADDR_WIDTH = 18,
     parameter ROM_DEPTH    = 212352,
-    parameter ROM_MEM_FILE = "weights/weights_unified.hex",
+    parameter ROM_MEM_FILE = "weights/engine/weights_unified.hex",
 
     parameter GEN_TOKENS   = 16
 ) (

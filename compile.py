@@ -57,6 +57,10 @@ def compile_model(args):
         with open(args.formats) as f:
             formats = {**(formats or {}), **json.load(f)}
     ir = quantize_model(model, config, bit_width=args.precision, formats=formats)
+    # Uniform-width view of the same model for the ROM-based engine
+    # (hdl/transformer_engine.v): every tensor at ``bit_width`` bytes.
+    ir_engine = quantize_model(model, config, bit_width=args.precision,
+                               engine_compatible=True)
     print(f"       Total parameters: {ir.total_params:,}")
     print(f"       Weight memory:    {ir.total_weight_bytes:,} bytes "
           f"({ir.total_weight_bytes / 1024:.1f} KB)")
@@ -76,6 +80,12 @@ def compile_model(args):
     total_bytes = sum(e[2] for e in exported)
     print(f"       Total weight data: {total_bytes:,} bytes")
 
+    # Uniform-width image consumed by the ROM-based engine (rom_sync/weight_rom).
+    engine_dir = os.path.join(weights_dir, "engine")
+    export_all_weights(ir_engine, engine_dir, fmt="hex", unified_only=True)
+    print(f"       [ok] {os.path.join(engine_dir, 'weights_unified.hex')} "
+          f"({ir_engine.total_weight_bytes:,} bytes, {args.precision}-bit uniform)")
+
     # ── Step 4: Generate Verilog RTL ──
     rtl_dir = os.path.join(args.out, "rtl")
     os.makedirs(rtl_dir, exist_ok=True)
@@ -88,8 +98,14 @@ def compile_model(args):
 
     # Generate ROM instantiation wrapper
     rom_path = os.path.join(rtl_dir, "weight_rom.v")
-    _write_weight_rom(ir, rom_path)
+    _write_weight_rom(ir_engine, rom_path)
     print(f"       [ok] {rom_path}")
+
+    # Generate board parameters (ROM geometry, dimensions, per-layer shifts)
+    board_path = os.path.join(rtl_dir, "board_params.vh")
+    _write_board_params(ir, ir_engine, board_path)
+    print(f"       [ok] {board_path}")
+
     numeric = export_fixed(ir, args.out)
     print('       [ok] fixed_point.json, fixed_params.vh, configured numeric wrappers and GELU tables')
     print(f"       GELU tables: {sum(v['bytes'] for v in numeric['gelu'].values()):,} additional bytes (not in weight budget)")
@@ -187,7 +203,7 @@ def _write_weight_rom(ir, filepath: str):
         f.write(f"    reg [DATA_WIDTH-1:0] mem [0:DEPTH-1];\n\n")
 
         f.write(f"    initial begin\n")
-        f.write(f'        $readmemh("weights/weights_unified.hex", mem);\n')
+        f.write(f'        $readmemh("weights/engine/weights_unified.hex", mem);\n')
         f.write(f"    end\n\n")
 
         f.write(f"    always @(posedge clk) begin\n")
@@ -195,6 +211,63 @@ def _write_weight_rom(ir, filepath: str):
         f.write(f"    end\n\n")
 
         f.write(f"endmodule\n")
+
+
+def _write_board_params(ir, ir_engine, filepath: str):
+    """Generate a parameters header for the board/engine (fpga_top).
+
+    ``ir`` is the mixed-width fixed-contract model; ``ir_engine`` is the
+    uniform-width model whose image the ROM-based engine consumes. This keeps
+    the FPGA defaults from drifting out of sync with a compiled checkpoint.
+    """
+    depth = ir_engine.total_weight_bytes
+    addr_width = max(1, (depth - 1).bit_length())
+
+    def shift(layer):
+        return getattr(layer, "requant_shift", 0)
+
+    with open(filepath, 'w') as f:
+        f.write("// ===================================================\n")
+        f.write("// fpGPT Compiler -- Auto-generated Board Parameters\n")
+        f.write("// DO NOT EDIT -- regenerate with: python compile.py\n")
+        f.write("// ===================================================\n\n")
+
+        f.write("// Model architecture (must match the trained checkpoint)\n")
+        f.write(f"localparam BOARD_DATA_WIDTH   = {ir.bit_width};\n")
+        f.write(f"localparam BOARD_VOCAB_SIZE   = {ir.vocab_size};\n")
+        f.write(f"localparam BOARD_MAX_SEQ_LEN  = {ir.max_seq_len};\n")
+        f.write(f"localparam BOARD_D_MODEL      = {ir.d_model};\n")
+        f.write(f"localparam BOARD_NUM_HEADS    = {ir.num_heads};\n")
+        f.write(f"localparam BOARD_NUM_LAYERS   = {ir.num_layers};\n")
+        f.write(f"localparam BOARD_D_FF         = {ir.d_ff};\n\n")
+
+        f.write("// Uniform-width engine ROM geometry\n")
+        f.write(f"localparam BOARD_ROM_DEPTH    = {depth};\n")
+        f.write(f"localparam BOARD_W_ADDR_WIDTH = {addr_width};\n\n")
+
+        f.write("// Per-stage requantization shifts from the fixed contract.\n")
+        f.write("// transformer_engine.v currently takes one global shift per\n")
+        f.write("// projection type; the B<layer>_* values are for a per-layer engine.\n")
+        first = ir.blocks[0]
+        f.write(f"localparam ENGINE_Q_SHIFT   = {shift(first.attention.q_proj)};\n")
+        f.write(f"localparam ENGINE_K_SHIFT   = {shift(first.attention.k_proj)};\n")
+        f.write(f"localparam ENGINE_V_SHIFT   = {shift(first.attention.v_proj)};\n")
+        f.write(f"localparam ENGINE_OUT_SHIFT = {shift(first.attention.out_proj)};\n")
+        f.write(f"localparam ENGINE_FC1_SHIFT = {shift(first.mlp_fc1)};\n")
+        f.write(f"localparam ENGINE_FC2_SHIFT = {shift(first.mlp_fc2)};\n")
+        f.write(f"localparam ENGINE_LM_SHIFT  = {shift(ir.lm_head)};\n\n")
+
+        for block in ir.blocks:
+            i = block.block_idx
+            f.write(f"localparam B{i}_Q_SHIFT   = {shift(block.attention.q_proj)};\n")
+            f.write(f"localparam B{i}_K_SHIFT   = {shift(block.attention.k_proj)};\n")
+            f.write(f"localparam B{i}_V_SHIFT   = {shift(block.attention.v_proj)};\n")
+            f.write(f"localparam B{i}_OUT_SHIFT = {shift(block.attention.out_proj)};\n")
+            f.write(f"localparam B{i}_FC1_SHIFT = {shift(block.mlp_fc1)};\n")
+            f.write(f"localparam B{i}_FC2_SHIFT = {shift(block.mlp_fc2)};\n")
+        f.write("\n// Attention score settings (layer 0)\n")
+        f.write(f"localparam ENGINE_SCORE_MULT  = {first.attention.score_mult};\n")
+        f.write(f"localparam ENGINE_SCORE_SHIFT = {first.attention.score_shift};\n")
 
 
 def main():

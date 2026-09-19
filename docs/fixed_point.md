@@ -30,11 +30,10 @@ python -m model.validate_fixed --model checkpoints/micro_gpt.pt \
 python -m unittest discover -s tests -v
 ```
 
-> **Known breakage:** `model/validate_fixed.py` and `tests/test_fixed_point.py`
-> import an integer-reference API (`FixedMicroGPT`, `attention`, `layer_norm`,
-> `residual`, `gelu_table`, `shift`, `clip`) that `model/fixed_point.py` does
-> not currently define. The validation command and that test module therefore
-> fail at import until the emulator is restored to match the contract below.
+> **Resolved:** `model/fixed_point.py` now defines the integer-reference API
+> (`FixedMicroGPT`, `attention`, `layer_norm`, `residual`, `gelu_table`,
+> `shift`, `clip`) alongside the block-level emulator, so the validation
+> command and `tests/test_fixed_point.py` run.
 
 Calibration chooses per-stage fractional bits from the maximum observed
 absolute activation with 10% headroom. Embedding ranges include the entire
@@ -126,13 +125,17 @@ measured.
 
 - The `fixed_*` operators are generated and elaborated in simulation, but no
   controller sequences them into a full model.
-- `hdl/transformer_engine.v` **does** sequence a full forward pass, but reads
-  weights as raw `DATA_WIDTH` values with sign-extended 8-bit biases and 8-bit
-  LayerNorm parameters. The compiler exports 64-bit attention biases and 32-bit
-  LayerNorm gamma/beta, so the engine cannot consume a compiler-generated
-  unified ROM image without a layout/width change on one side.
-- `model/fixed_point.py` is an older emulator that does not implement the API
-  the validation tooling imports.
+- `hdl/transformer_engine.v` **does** sequence a full forward pass and now
+  consumes a compiler-generated **uniform-width** image
+  (`build/weights/engine/weights_unified.hex`). Its numeric contract is still
+  approximate: it takes one global requant shift per projection type, while the
+  fixed contract assigns per-layer shifts, and it adds `DATA_WIDTH` biases
+  directly rather than in the accumulator domain.
+- `model/fixed_point.py` defines both the integer-reference API the validation
+  tooling imports and the older block-level emulator.
+- `compile.py` also emits a **uniform-width** engine image
+  (`build/weights/engine/weights_unified.hex`) and `build/rtl/board_params.vh`
+  for the ROM-based engine, separate from the mixed-width fixed-contract image.
 - Board integration now exists in simulation: `fpga/generation_controller.v`
   wraps `transformer_engine.v`, owns the ROM (`rom_sync`), buffers a prompt,
   greedily picks the argmax token, and feeds it back; `fpga/fpga_top.v` wires it

@@ -73,7 +73,8 @@ def write_hex(tensor: QuantizedTensor, filepath: str, word_width: int = 8):
             f.write(_to_hex(int(val), word_width) + "\n")
 
 
-def export_all_weights(ir: ModelIR, output_dir: str, fmt: str = "both"):
+def export_all_weights(ir: ModelIR, output_dir: str, fmt: str = "both",
+                       unified_only: bool = False):
     """
     Export all quantized weights from a ModelIR to .mif and/or .hex files.
 
@@ -90,6 +91,9 @@ def export_all_weights(ir: ModelIR, output_dir: str, fmt: str = "both"):
         ir: Fully quantized ModelIR.
         output_dir: Base directory for output files.
         fmt: "mif", "hex", or "both".
+        unified_only: When True, only write the byte-addressed
+                ``weights_unified.hex`` image (used for the uniform-width
+                engine ROM) and skip the per-tensor files.
 
     Returns:
         List of (name, filepath, size_bytes) tuples for all exported files.
@@ -105,6 +109,8 @@ def export_all_weights(ir: ModelIR, output_dir: str, fmt: str = "both"):
         # are little-endian; standalone tensor files retain their native width.
         for value in tensor.data.flat:
             unified.extend((int(value) >> (8*i)) & 255 for i in range(tensor.bit_width//8))
+        if unified_only:
+            return
         if fmt in ("mif", "both"):
             path = os.path.join(output_dir, f"{name}.mif")
             write_mif(tensor, path, tensor.bit_width)
