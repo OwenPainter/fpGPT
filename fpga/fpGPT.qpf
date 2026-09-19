@@ -1,0 +1,5 @@
+QUARTUS_VERSION = "20.1"
+DATE = "01:00:00  September 19, 2026"
+
+# Revisions
+PROJECT_REVISION = "fpGPT"
