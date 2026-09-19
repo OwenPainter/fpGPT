@@ -6,8 +6,8 @@ suitable for direct hardware implementation in Cyclone V DSP blocks and M10K ROM
 
 Quantization scheme: Symmetric per-tensor
     q = clamp(round(x / scale), -128, 127)
-    scale = max(|x|) / 127
-    shift_bits = round(-log2(scale))  for hardware bit-shift approximation
+    scale = 2**(-floor(log2(q_max / max(abs(x)))))
+    Weights use exact binary scales; biases use the input-times-weight scale.
 """
 
 import math
@@ -33,6 +33,10 @@ def quantize_tensor(tensor: torch.Tensor, bit_width: int = 8) -> QuantizedTensor
         QuantizedTensor with int8/int16 data and scale metadata.
     """
     data = tensor.detach().cpu().float().numpy()
+    if bit_width not in (8, 16):
+        raise ValueError('unsupported tensor width')
+    if not np.isfinite(data).all():
+        raise ValueError('non-finite model parameter')
     max_val = np.max(np.abs(data))
 
     if max_val < 1e-10:
@@ -40,23 +44,23 @@ def quantize_tensor(tensor: torch.Tensor, bit_width: int = 8) -> QuantizedTensor
         q_max = (1 << (bit_width - 1)) - 1  # 127 for 8-bit
         return QuantizedTensor(
             data=np.zeros(data.shape, dtype=np.int8 if bit_width == 8 else np.int16),
-            scale=1.0 / q_max,
-            shift_bits=7,
+            scale=2.0 ** -(bit_width-1),
+            shift_bits=bit_width-1,
             shape=data.shape,
             bit_width=bit_width,
         )
 
     q_max = (1 << (bit_width - 1)) - 1  # 127 for 8-bit, 32767 for 16-bit
-    scale = max_val / q_max
+    shift_bits = min(24, math.floor(math.log2(q_max / float(max_val))))
+    if shift_bits < -16:
+        raise ValueError('weight magnitude exceeds supported fixed-point range')
+    scale = 2.0 ** -shift_bits
 
     # Quantize
     q_data = np.clip(np.round(data / scale), -q_max - 1, q_max)
     dtype = np.int8 if bit_width == 8 else np.int16
     q_data = q_data.astype(dtype)
 
-    # Compute shift_bits: approximate scale as 2^(-shift_bits)
-    # In hardware: result = (accumulator * scale) ≈ (accumulator >> shift_bits)
-    shift_bits = max(0, round(-math.log2(scale))) if scale > 0 else 0
 
     return QuantizedTensor(
         data=q_data,
@@ -105,7 +109,8 @@ def quantize_layer_norm(name: str, layer: nn.LayerNorm, bit_width: int = 8) -> L
     return ir
 
 
-def quantize_model(model: nn.Module, config: dict, bit_width: int = 8) -> ModelIR:
+def quantize_model(model: nn.Module, config: dict, bit_width: int = 8,
+                   formats: dict = None) -> ModelIR:
     """
     Quantize an entire MicroGPT model into the compiler's IR.
 
@@ -204,7 +209,10 @@ def quantize_model(model: nn.Module, config: dict, bit_width: int = 8) -> ModelI
 
     ir.total_params = total_params
 
-    # Compute sequential memory layout
+    # Apply activation formats and accumulator-domain biases before allocation.
+    from .fixed_contract import configure
+    configure(ir, model, formats)
+    # Compute sequential byte layout (mixed-width tensors).
     ir.compute_memory_layout()
 
     return ir

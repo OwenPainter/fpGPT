@@ -96,10 +96,15 @@ def export_all_weights(ir: ModelIR, output_dir: str, fmt: str = "both"):
     """
     os.makedirs(output_dir, exist_ok=True)
     exported = []
+    unified = []
 
     def _export(name: str, tensor: QuantizedTensor):
         if tensor is None:
             return
+        # Mixed-width tensors share a byte-addressed ROM. Multi-byte values
+        # are little-endian; standalone tensor files retain their native width.
+        for value in tensor.data.flat:
+            unified.extend((int(value) >> (8*i)) & 255 for i in range(tensor.bit_width//8))
         if fmt in ("mif", "both"):
             path = os.path.join(output_dir, f"{name}.mif")
             write_mif(tensor, path, tensor.bit_width)
@@ -157,4 +162,7 @@ def export_all_weights(ir: ModelIR, output_dir: str, fmt: str = "both"):
         if ir.lm_head.bias:
             _export("lm_head_bias", ir.lm_head.bias)
 
+    # Required by generated weight_rom, even when only MIF tensor files requested.
+    with open(os.path.join(output_dir, 'weights_unified.hex'), 'w') as f:
+        f.write(''.join(f'{v:02X}\n' for v in unified))
     return exported

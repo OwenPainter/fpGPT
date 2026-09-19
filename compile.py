@@ -13,6 +13,7 @@ import argparse
 import os
 import sys
 import time
+import json
 
 import torch
 
@@ -22,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from model.micro_gpt import MicroGPT
 from compiler.quantizer import quantize_model
 from compiler.mif_writer import export_all_weights
+from compiler.fixed_export import export_fixed
 
 
 def compile_model(args):
@@ -46,7 +48,15 @@ def compile_model(args):
 
     # ── Step 2: Quantize ──
     print(f"\n[2/4] Quantizing to INT{args.precision}...")
-    ir = quantize_model(model, config, bit_width=args.precision)
+    formats = None
+    if getattr(args, 'calibration', None):
+        from compiler.calibration import calibrate_formats
+        with open(args.calibration) as f:
+            formats = calibrate_formats(model, json.load(f), args.precision)
+    if getattr(args, 'formats', None):
+        with open(args.formats) as f:
+            formats = {**(formats or {}), **json.load(f)}
+    ir = quantize_model(model, config, bit_width=args.precision, formats=formats)
     print(f"       Total parameters: {ir.total_params:,}")
     print(f"       Weight memory:    {ir.total_weight_bytes:,} bytes "
           f"({ir.total_weight_bytes / 1024:.1f} KB)")
@@ -80,6 +90,9 @@ def compile_model(args):
     rom_path = os.path.join(rtl_dir, "weight_rom.v")
     _write_weight_rom(ir, rom_path)
     print(f"       [ok] {rom_path}")
+    numeric = export_fixed(ir, args.out)
+    print('       [ok] fixed_point.json, fixed_params.vh, configured numeric wrappers and GELU tables')
+    print(f"       GELU tables: {sum(v['bytes'] for v in numeric['gelu'].values()):,} additional bytes (not in weight budget)")
 
     elapsed = time.time() - t0
     print(f"\n{'=' * 56}")
@@ -161,7 +174,7 @@ def _write_weight_rom(ir, filepath: str):
         addr_width = max(1, (depth - 1).bit_length())
 
         f.write(f"module weight_rom #(\n")
-        f.write(f"    parameter DATA_WIDTH = {ir.bit_width},\n")
+        f.write(f"    parameter DATA_WIDTH = 8, // Byte ROM: assemble little-endian multi-byte tensors\n")
         f.write(f"    parameter ADDR_WIDTH = {addr_width},\n")
         f.write(f"    parameter DEPTH      = {depth}\n")
         f.write(f") (\n")
@@ -174,7 +187,7 @@ def _write_weight_rom(ir, filepath: str):
         f.write(f"    reg [DATA_WIDTH-1:0] mem [0:DEPTH-1];\n\n")
 
         f.write(f"    initial begin\n")
-        f.write(f'        $readmemh("weights_unified.hex", mem);\n')
+        f.write(f'        $readmemh("weights/weights_unified.hex", mem);\n')
         f.write(f"    end\n\n")
 
         f.write(f"    always @(posedge clk) begin\n")
@@ -196,6 +209,8 @@ def main():
                         help="Quantization bit width (8 or 16)")
     parser.add_argument("--fmt", type=str, default="both", choices=["mif", "hex", "both"],
                         help="Weight file format to export")
+    parser.add_argument('--formats', help='JSON mapping activation stage names to fractional bits (0..15)')
+    parser.add_argument('--calibration', help='JSON list of representative token-ID sequences for activation ranges')
     args = parser.parse_args()
     compile_model(args)
 

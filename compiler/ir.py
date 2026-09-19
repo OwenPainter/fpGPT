@@ -38,8 +38,8 @@ class QuantizedTensor:
     Attributes:
         data: The quantized integer values (int8 or int16 numpy array).
         scale: The floating-point scale factor used during quantization.
-              Hardware uses bit-shift approximation: value ≈ q_val * (2^shift_bits).
-        shift_bits: Integer number of right-shift bits to approximate division by scale.
+              Exactly 2**(-shift_bits), so real_value = data * scale.
+        shift_bits: Fractional bits of the stored tensor (not a MAC output shift).
         shape: Original tensor shape (rows, cols) for matrices.
         bit_width: Number of bits per element (8 or 16).
     """
@@ -70,6 +70,9 @@ class LinearLayerIR:
     # Memory layout: base address in the unified weight ROM
     weight_base_addr: int = 0
     bias_base_addr: int = 0
+    input_frac: int = 0
+    output_frac: int = 0
+    requant_shift: int = 0
 
 
 @dataclass
@@ -91,6 +94,9 @@ class LayerNormIR:
     beta: Optional[QuantizedTensor] = None   # shift
     gamma_base_addr: int = 0
     beta_base_addr: int = 0
+    input_frac: int = 0
+    output_frac: int = 0
+    epsilon_int: int = 1
 
 
 @dataclass
@@ -109,6 +115,8 @@ class AttentionIR:
     k_proj: LinearLayerIR = None
     v_proj: LinearLayerIR = None
     out_proj: LinearLayerIR = None
+    score_mult: int = 1
+    score_shift: int = 0
 
 
 @dataclass
@@ -151,6 +159,7 @@ class ModelIR:
     # Memory layout summary
     total_params: int = 0
     total_weight_bytes: int = 0
+    formats: dict = field(default_factory=dict)
 
     def compute_memory_layout(self):
         """
