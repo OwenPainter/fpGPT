@@ -19,14 +19,15 @@ set_global_assignment -name BOARD "DE1-SoC Board"
 set_global_assignment -name VERILOG_FILE fpga_top.v
 set_global_assignment -name VERILOG_FILE uart_rx.v
 set_global_assignment -name VERILOG_FILE uart_tx.v
+set_global_assignment -name VERILOG_FILE generation_controller.v
 
-set_global_assignment -name VERILOG_FILE ../hdl/gpt_controller.v
-set_global_assignment -name VERILOG_FILE ../hdl/transformer_block.v
+set_global_assignment -name VERILOG_FILE ../hdl/transformer_engine.v
+set_global_assignment -name VERILOG_FILE ../hdl/attention.v
+set_global_assignment -name VERILOG_FILE ../hdl/layer_norm.v
 set_global_assignment -name VERILOG_FILE ../hdl/dense_layer.v
 set_global_assignment -name VERILOG_FILE ../hdl/mac_unit.v
 set_global_assignment -name VERILOG_FILE ../hdl/activation.v
 set_global_assignment -name VERILOG_FILE ../hdl/rom_sync.v
-set_global_assignment -name VERILOG_FILE ../build/rtl/weight_rom.v
 
 # -------------------------------------------------------------------------- #
 # Pin Assignments (DE1-SoC)
