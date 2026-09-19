@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>fpGPT &mdash; FPGA chat</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">&#9632;</span>
+      <div>
+        <h1>fpGPT</h1>
+        <p class="subtitle">language model on FPGA fabric &mdash; host bridge</p>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge" id="badge-transport">transport: &mdash;</span>
+      <span class="badge" id="badge-mode">mode: &mdash;</span>
+      <span class="badge" id="badge-model">model: &mdash;</span>
+      <span class="dot" id="conn-dot" title="connection"></span>
+    </div>
+  </header>
+
+  <div class="banner" id="banner">
+    Research prototype. The on-FPGA model is a small, lightly trained
+    character model &mdash; replies are a fixed-length character stream, not a
+    chatbot. Expect low-quality text.
+  </div>
+
+  <main id="chat" class="chat" aria-live="polite"></main>
+
+  <footer class="composer">
+    <div class="composer-row">
+      <textarea id="prompt" rows="2" placeholder="Type a prompt&hellip; (Enter to send, Shift+Enter for newline)"
+                autocomplete="off" spellcheck="false"></textarea>
+      <div class="buttons">
+        <button id="send" class="primary">Send</button>
+        <button id="reset" title="Best-effort clear">Reset</button>
+        <button id="export" title="Download the transcript">Export</button>
+      </div>
+    </div>
+    <div class="composer-meta">
+      <span id="char-count">0 chars</span>
+      <span id="char-range"></span>
+      <span id="gen-info"></span>
+      <span class="state" id="state-text">idle</span>
+    </div>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,164 @@
+:root {
+  --bg: #0e1116;
+  --panel: #161b22;
+  --panel-2: #1c232c;
+  --border: #2b3440;
+  --text: #e6edf3;
+  --muted: #8b98a5;
+  --accent: #4c9aff;
+  --user: #1f3b5c;
+  --assistant: #1d2a24;
+  --error: #b3493f;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 1.1rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.brand { display: flex; align-items: center; gap: 0.6rem; }
+.logo { color: var(--accent); font-size: 1.6rem; line-height: 1; }
+.brand h1 { font-size: 1.05rem; margin: 0; }
+.subtitle { margin: 0; font-size: 0.72rem; color: var(--muted); }
+
+.badges { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.badge {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  color: var(--muted);
+}
+
+.dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--error); box-shadow: 0 0 8px rgba(179,73,63,0.6);
+  transition: background 0.2s;
+}
+.dot.online { background: var(--ok); box-shadow: 0 0 8px rgba(63,185,80,0.6); }
+
+.banner {
+  font-size: 0.78rem;
+  color: var(--warn);
+  background: rgba(210,153,34,0.08);
+  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 1.1rem;
+}
+
+.chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.msg {
+  max-width: 780px;
+  padding: 0.6rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.msg .role {
+  display: block;
+  font-family: system-ui, sans-serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+.msg.user { align-self: flex-end; background: var(--user); }
+.msg.assistant { align-self: flex-start; background: var(--assistant); }
+.msg.system {
+  align-self: center;
+  background: transparent;
+  border-style: dashed;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.msg.error { border-color: var(--error); }
+
+.cursor::after {
+  content: "\2588";
+  color: var(--accent);
+  animation: blink 1s step-start infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.composer {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 0.7rem 1.1rem 0.8rem;
+}
+.composer-row { display: flex; gap: 0.6rem; align-items: stretch; }
+
+textarea {
+  flex: 1;
+  resize: none;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+}
+textarea:focus { outline: 1px solid var(--accent); }
+
+.buttons { display: flex; flex-direction: column; gap: 0.35rem; }
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 600; }
+
+.composer-meta {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.45rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  flex-wrap: wrap;
+}
+.state { margin-left: auto; }
+.state.busy { color: var(--accent); }
+.state.error { color: var(--error); }
+.state.idle { color: var(--ok); }

@@ -1,0 +1,9 @@
+# fpGPT host GUI dependencies.
+#
+# The host bridge, mock transports and tests use ONLY the Python standard
+# library, so the GUI runs with no installation:
+#
+#     python3 host_gui/run.py
+#
+# pyserial is required only for --transport serial (a real DE1-SoC over UART).
+pyserial>=3.5
