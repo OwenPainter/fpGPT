@@ -14,17 +14,48 @@
 //
 // Model geometry and the engine shifts come from board_params.vh (stream 1:
 // compile.py -> build/rtl/board_params.vh, copied here by build.tcl). It is
-// `include`d inside the module because it declares localparams. Define
-// FPGPT_TINY_TEST to substitute a small model for the smoke testbench.
+// included at file scope because the FPGPT_* macros also seed the module
+// parameter defaults. Define FPGPT_TINY_TEST to substitute a small model for
+// the smoke testbench.
 // ═══════════════════════════════════════════════════════════════
 
+`ifdef FPGPT_TINY_TEST
+    // Small model for tests/tb_fpga_top.v; mirrors board_params.vh.
+    `define FPGPT_BOARD_PARAMS_VH
+    `define FPGPT_DATA_WIDTH     8
+    `define FPGPT_D_MODEL        4
+    `define FPGPT_NUM_HEADS      2
+    `define FPGPT_MAX_SEQ_LEN    4
+    `define FPGPT_NUM_LAYERS     1
+    `define FPGPT_D_FF           4
+    `define FPGPT_VOCAB_SIZE     8
+    `define FPGPT_W_ADDR_WIDTH   12
+    `define FPGPT_ROM_DEPTH      4096
+    `define FPGPT_ROM_MEM_FILE   "no_such_file.hex"
+    `define FPGPT_GEN_TOKENS     1
+    `define FPGPT_Q_SHIFT        0
+    `define FPGPT_K_SHIFT        0
+    `define FPGPT_V_SHIFT        0
+    `define FPGPT_OUT_SHIFT      0
+    `define FPGPT_SCORE_MULT     64
+    `define FPGPT_SCORE_SHIFT    8
+    `define FPGPT_LN_SHIFT       7
+    `define FPGPT_FC1_SHIFT      0
+    `define FPGPT_FC2_SHIFT      0
+    `define FPGPT_LM_SHIFT       0
+    `define FPGPT_SYS_CLK_HZ     50000000
+    `define FPGPT_BAUD_RATE      115200
+`else
+    `include "board_params.vh"
+`endif
+
 module fpga_top #(
-    parameter ROM_MEM_FILE = "weights_unified.hex",
-    parameter GEN_TOKENS   = 16,
+    parameter ROM_MEM_FILE = `FPGPT_ROM_MEM_FILE,
+    parameter GEN_TOKENS   = `FPGPT_GEN_TOKENS,
     parameter TOP_K        = 4,
-    parameter CLK_FREQ     = 150_000_000,
-    parameter BAUD_RATE    = 115200,
-    parameter LN_SHIFT     = 7
+    parameter CLK_FREQ     = `FPGPT_SYS_CLK_HZ,
+    parameter BAUD_RATE    = `FPGPT_BAUD_RATE,
+    parameter LN_SHIFT     = `FPGPT_LN_SHIFT
 ) (
     // Clock & Reset
     input  wire        CLOCK_50, // 50 MHz oscillator, PIN_AF14
@@ -37,30 +68,6 @@ module fpga_top #(
     // Debug
     output wire [9:0]  LEDR
 );
-
-`ifdef FPGPT_TINY_TEST
-    // Small model for tests/tb_fpga_top.v; mirrors board_params.vh.
-    localparam BOARD_DATA_WIDTH   = 8;
-    localparam BOARD_VOCAB_SIZE   = 8;
-    localparam BOARD_MAX_SEQ_LEN  = 4;
-    localparam BOARD_D_MODEL      = 4;
-    localparam BOARD_NUM_HEADS    = 2;
-    localparam BOARD_NUM_LAYERS   = 1;
-    localparam BOARD_D_FF         = 4;
-    localparam BOARD_ROM_DEPTH    = 4096;
-    localparam BOARD_W_ADDR_WIDTH = 12;
-    localparam ENGINE_Q_SHIFT     = 0;
-    localparam ENGINE_K_SHIFT     = 0;
-    localparam ENGINE_V_SHIFT     = 0;
-    localparam ENGINE_OUT_SHIFT   = 0;
-    localparam ENGINE_FC1_SHIFT   = 0;
-    localparam ENGINE_FC2_SHIFT   = 0;
-    localparam ENGINE_LM_SHIFT    = 0;
-    localparam ENGINE_SCORE_MULT  = 64;
-    localparam ENGINE_SCORE_SHIFT = 8;
-`else
-    `include "board_params.vh"
-`endif
 
     wire rst_n = KEY[0];
 
@@ -101,25 +108,25 @@ module fpga_top #(
     wire [31:0] gen_cycles;   // test hook: cycles of the last generation burst
 
     generation_controller #(
-        .DATA_WIDTH(BOARD_DATA_WIDTH),
-        .D_MODEL(BOARD_D_MODEL),
-        .NUM_HEADS(BOARD_NUM_HEADS),
-        .MAX_SEQ_LEN(BOARD_MAX_SEQ_LEN),
-        .NUM_LAYERS(BOARD_NUM_LAYERS),
-        .D_FF(BOARD_D_FF),
-        .VOCAB_SIZE(BOARD_VOCAB_SIZE),
-        .Q_SHIFT(ENGINE_Q_SHIFT),
-        .K_SHIFT(ENGINE_K_SHIFT),
-        .V_SHIFT(ENGINE_V_SHIFT),
-        .OUT_SHIFT(ENGINE_OUT_SHIFT),
-        .SCORE_MULT(ENGINE_SCORE_MULT),
-        .SCORE_SHIFT(ENGINE_SCORE_SHIFT),
+        .DATA_WIDTH(`FPGPT_DATA_WIDTH),
+        .D_MODEL(`FPGPT_D_MODEL),
+        .NUM_HEADS(`FPGPT_NUM_HEADS),
+        .MAX_SEQ_LEN(`FPGPT_MAX_SEQ_LEN),
+        .NUM_LAYERS(`FPGPT_NUM_LAYERS),
+        .D_FF(`FPGPT_D_FF),
+        .VOCAB_SIZE(`FPGPT_VOCAB_SIZE),
+        .Q_SHIFT(`FPGPT_Q_SHIFT),
+        .K_SHIFT(`FPGPT_K_SHIFT),
+        .V_SHIFT(`FPGPT_V_SHIFT),
+        .OUT_SHIFT(`FPGPT_OUT_SHIFT),
+        .SCORE_MULT(`FPGPT_SCORE_MULT),
+        .SCORE_SHIFT(`FPGPT_SCORE_SHIFT),
         .LN_SHIFT(LN_SHIFT),
-        .FC1_SHIFT(ENGINE_FC1_SHIFT),
-        .FC2_SHIFT(ENGINE_FC2_SHIFT),
-        .LM_SHIFT(ENGINE_LM_SHIFT),
-        .W_ADDR_WIDTH(BOARD_W_ADDR_WIDTH),
-        .ROM_DEPTH(BOARD_ROM_DEPTH),
+        .FC1_SHIFT(`FPGPT_FC1_SHIFT),
+        .FC2_SHIFT(`FPGPT_FC2_SHIFT),
+        .LM_SHIFT(`FPGPT_LM_SHIFT),
+        .W_ADDR_WIDTH(`FPGPT_W_ADDR_WIDTH),
+        .ROM_DEPTH(`FPGPT_ROM_DEPTH),
         .ROM_MEM_FILE(ROM_MEM_FILE),
         .GEN_TOKENS(GEN_TOKENS),
         .TOP_K(TOP_K)

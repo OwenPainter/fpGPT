@@ -70,8 +70,9 @@ character, selects the next token from the top-k logits, and feeds it back.
   `tests/test_generation_controller.py` and `tests/tb_fpga_top.v`.
 - **FPGA project:** a synthesizable DE1-SoC target with a 50→150 MHz PLL
   (`pll_150.v`), a real SDC (`fpGPT.sdc`), a Quartus flow (`build.tcl`,
-  `timing.tcl`), and a programming runbook (`PROGRAMMING.md`). The UART pins
-  (GPIO_0[0:1]) are verified against the DE1-SoC pin table.
+  `timing.tcl`), and a programming runbook (`PROGRAMMING.md`). The clock
+  (`CLOCK_50`), reset keys (`KEY[3:0]`) and UART pins (GPIO_0[0:1]) are
+  verified against the DE1-SoC pin table.
 - **Throughput harness:** `tests/test_throughput.py` measures cycles/token in
   RTL and reports tok/s at 50 and 150 MHz (the default shape is gated behind
   `FPGPT_THROUGHPUT_DEFAULT=1`).
@@ -324,7 +325,8 @@ fpGPT/
       program/pof + UART runbook (`PROGRAMMING.md`)
 - [x] Resolve the ROM `$readmemh` path (`SEARCH_PATH` + `MIF_FILE` +
       `build.tcl` copying the compiled engine image)
-- [x] Verify UART pin assignments against the DE1-SoC pin table (GPIO_0[0:1])
+- [x] Verify clock/reset/UART pin assignments against the DE1-SoC pin table
+      (`CLOCK_50`, `KEY[3:0]`, GPIO_0[0:1])
 - [ ] Run Quartus synthesis/fit; record ALM, DSP, and M10K usage
 - [ ] Achieve timing closure and record Fmax (150 MHz is unverified)
 - [ ] On-board bring-up and end-to-end generation test
@@ -340,7 +342,7 @@ fpGPT/
 - [x] Add `pytest` to `requirements.txt`
 - [x] Elaborate the PLL/board top in CI without Quartus
       (`test_board_top_elaborates_with_pll`, via the `altera_pll` stub)
-- [ ] Replace or delete the orphaned `tb_transformer_block.v`
+- [x] Delete the orphaned `tb_transformer_block.v`
 - [ ] Add CI that installs `torch` and `iverilog` and runs the full suite
 - [ ] Add an end-to-end test from checkpoint → compiled ROM → board RTL
 
