@@ -138,17 +138,18 @@ measured.
   for the ROM-based engine, separate from the mixed-width fixed-contract image.
 - Board integration now exists in simulation: `fpga/generation_controller.v`
   wraps `transformer_engine.v`, owns the ROM (`rom_sync`), buffers a prompt,
-  greedily picks the argmax token, and feeds it back; `fpga/fpga_top.v` wires it
-  to UART. It inherits the width mismatch above, has no KV cache, uses greedy
-  argmax only, and has no documented host protocol. `gpt_controller.v` and
-  `transformer_block.v` are unused stubs.
+  selects a token from the top-k logits (`TOP_K`), and feeds it back;
+  `fpga/fpga_top.v` wires it to UART. It inherits the width mismatch above, has
+  no KV cache that skips recomputation, and has no documented host protocol.
+  `gpt_controller.v` and `transformer_block.v` have been deleted.
 
 ## Verification
 
-`tests/test_fixed_point.py` is intended to require exact RTL/integer agreement
-for attention, linear layers, LayerNorm, residuals and GELU, and PyTorch
-comparisons of attention, LayerNorm and full-model logits at both precisions.
-**It does not currently run**, because its imported emulator API is missing.
+`tests/test_fixed_point.py` requires exact RTL/integer agreement for attention,
+linear layers, LayerNorm, residuals and GELU, and PyTorch comparisons of
+attention, LayerNorm and full-model logits at both precisions. The RTL portions
+skip when `iverilog`/`vvp` are not on `PATH`; the Python numeric checks run
+regardless.
 
 What is verified today:
 
@@ -163,7 +164,8 @@ What is verified today:
   integer model. It uses its own 8-bit ROM layout, not compiler output.
 - `tests/test_generation_controller.py` drives `generation_controller.v` the way
   UART would, with a tiny model ROM, and checks that the emitted byte matches
-  the argmax of the integer reference's final-position logits.
+  the argmax of the integer reference's final-position logits (the test pins
+  `TOP_K=1`, i.e. greedy).
 
 Tolerances in the fixed-point tests apply to deterministic fixtures, not
 arbitrary trained checkpoints.

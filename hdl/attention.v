@@ -17,7 +17,8 @@ module attention #(
     parameter X_ADDR_WIDTH = (D_MODEL*MAX_SEQ_LEN <= 1) ? 1 : $clog2(D_MODEL*MAX_SEQ_LEN),
     parameter W_ADDR_WIDTH = (4*D_MODEL*D_MODEL <= 1) ? 1 : $clog2(4*D_MODEL*D_MODEL),
     parameter B_ADDR_WIDTH = (4*D_MODEL <= 1) ? 1 : $clog2(4*D_MODEL),
-    parameter LEN_WIDTH = $clog2(MAX_SEQ_LEN+1)
+    parameter LEN_WIDTH = $clog2(MAX_SEQ_LEN+1),
+    parameter NUM_LAYERS = 4
 ) (
     input wire clk, rst_n,
     input wire x_load,
@@ -31,6 +32,8 @@ module attention #(
     input wire signed [63:0] b_load_data,
     input wire start,
     input wire [LEN_WIDTH-1:0] seq_len,
+    input wire [LEN_WIDTH-1:0] cache_len,
+    input wire [(NUM_LAYERS<=1 ? 1 : $clog2(NUM_LAYERS))-1:0] layer_idx,
     output reg busy, done, error,
     output reg y_valid,
     output reg [X_ADDR_WIDTH-1:0] y_addr,
@@ -57,8 +60,8 @@ module attention #(
     reg signed [DATA_WIDTH-1:0] weights [0:4*D_MODEL*D_MODEL-1];
     reg signed [63:0] biases [0:4*D_MODEL-1];
     reg signed [DATA_WIDTH-1:0] queries [0:MAX_SEQ_LEN*D_MODEL-1];
-    reg signed [DATA_WIDTH-1:0] keys [0:MAX_SEQ_LEN*D_MODEL-1];
-    reg signed [DATA_WIDTH-1:0] values [0:MAX_SEQ_LEN*D_MODEL-1];
+    reg signed [DATA_WIDTH-1:0] k_cache [0:NUM_LAYERS*MAX_SEQ_LEN*D_MODEL-1];
+    reg signed [DATA_WIDTH-1:0] v_cache [0:NUM_LAYERS*MAX_SEQ_LEN*D_MODEL-1];
     reg signed [DATA_WIDTH-1:0] context_data [0:MAX_SEQ_LEN*D_MODEL-1];
     reg signed [63:0] scores [0:MAX_SEQ_LEN-1];
     reg [15:0] exponentials [0:MAX_SEQ_LEN-1];
@@ -136,10 +139,10 @@ module attention #(
         end
         if (state == SCORE_READ) begin
             operand_a <= queries[token*D_MODEL+head*HEAD_DIM+component];
-            operand_b <= keys[key_index*D_MODEL+head*HEAD_DIM+component];
+            operand_b <= k_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + key_index*D_MODEL+head*HEAD_DIM+component];
         end
         if (state == VALUE_READ) begin
-            operand_a <= values[key_index*D_MODEL+head*HEAD_DIM+component];
+            operand_a <= v_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + key_index*D_MODEL+head*HEAD_DIM+component];
             exp_operand <= exponentials[key_index];
         end
     end
@@ -156,11 +159,11 @@ module attention #(
             case (state)
                 IDLE: if (start) begin
                     error <= 0;
-                    if (seq_len == 0 || seq_len > MAX_SEQ_LEN) begin
+                    if (seq_len == 0 || seq_len > MAX_SEQ_LEN || cache_len > seq_len) begin
                         error <= 1; done <= 1;
                     end else begin
                         length <= seq_len; busy <= 1; projection <= 0;
-                        token <= 0; row <= 0; col <= 0;
+                        token <= cache_len; row <= 0; col <= 0;
                         accumulator <= 0; state <= PROJ_READ;
                     end
                 end
@@ -173,8 +176,8 @@ module attention #(
                 PROJ_SAVE: begin
                     case (projection)
                         0: queries[token*D_MODEL+row] <= saturate(requant(accumulator+biases[row], projection_shift));
-                        1: keys[token*D_MODEL+row] <= saturate(requant(accumulator+biases[D_MODEL+row], projection_shift));
-                        2: values[token*D_MODEL+row] <= saturate(requant(accumulator+biases[2*D_MODEL+row], projection_shift));
+                        1: k_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + token*D_MODEL+row] <= saturate(requant(accumulator+biases[D_MODEL+row], projection_shift));
+                        2: v_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + token*D_MODEL+row] <= saturate(requant(accumulator+biases[2*D_MODEL+row], projection_shift));
                         3: begin
                             y_data <= saturate(requant(accumulator+biases[3*D_MODEL+row], projection_shift));
                             y_addr <= token*D_MODEL+row; y_valid <= 1;
@@ -186,7 +189,7 @@ module attention #(
                         row <= 0;
                         if (token != length-1) token <= token+1;
                         else begin
-                            token <= 0;
+                            token <= cache_len;
                             if (projection < 2) projection <= projection+1;
                             else if (projection == 3) state <= FINISH;
                             else begin
@@ -235,7 +238,7 @@ module attention #(
                             head <= 0;
                             if (token != length-1) token <= token+1;
                             else begin
-                                projection <= 3; token <= 0; row <= 0; col <= 0; state <= PROJ_READ;
+                                projection <= 3; token <= cache_len; row <= 0; col <= 0; state <= PROJ_READ;
                             end
                         end
                     end

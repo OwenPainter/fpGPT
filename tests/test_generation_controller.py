@@ -83,7 +83,7 @@ generation_controller #(
     .OUT_SHIFT({shifts[3]}), .SCORE_MULT({mult}), .SCORE_SHIFT({score_shift}),
     .LN_SHIFT({ln_shift}), .FC1_SHIFT(0), .FC2_SHIFT(0), .LM_SHIFT(0),
     .W_ADDR_WIDTH({w_addr_width}), .ROM_DEPTH({len(image)}),
-    .ROM_MEM_FILE("weights.hex"), .GEN_TOKENS({gen_tokens})
+    .ROM_MEM_FILE("weights.hex"), .GEN_TOKENS({gen_tokens}), .TOP_K(1)
 ) dut (
     .clk(clk), .rst_n(rst_n), .token_in(token_in), .token_valid(token_valid),
     .token_out(token_out), .token_out_valid(token_out_valid), .busy(busy)

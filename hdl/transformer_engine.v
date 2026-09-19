@@ -51,6 +51,7 @@ module transformer_engine #(
     // Host control / token load
     input  wire                          start,
     input  wire [((MAX_SEQ_LEN+1) <= 1 ? 1 : $clog2(MAX_SEQ_LEN+1))-1:0] seq_len,
+    input  wire [((MAX_SEQ_LEN+1) <= 1 ? 1 : $clog2(MAX_SEQ_LEN+1))-1:0] cache_len,
     input  wire                          tok_load,
     input  wire [((MAX_SEQ_LEN <= 1) ? 1 : $clog2(MAX_SEQ_LEN))-1:0] tok_addr,
     input  wire [((VOCAB_SIZE <= 1) ? 1 : $clog2(VOCAB_SIZE))-1:0]   tok_data,
@@ -156,6 +157,7 @@ module transformer_engine #(
     reg  [ATTN_B_AW-1:0]   attn_b_addr;
     reg                    attn_start;
     reg  [LEN_W-1:0]       attn_seq_len;
+    reg  [LEN_W-1:0]       attn_cache_len;
     wire                   attn_busy, attn_done, attn_error, attn_y_valid;
     wire [ACT_AW-1:0]      attn_y_addr;
     wire signed [DATA_WIDTH-1:0] attn_y_data;
@@ -230,7 +232,7 @@ module transformer_engine #(
     // ── Sub-core instances ──
     attention #(
         .DATA_WIDTH(DATA_WIDTH), .D_MODEL(D_MODEL), .NUM_HEADS(NUM_HEADS),
-        .MAX_SEQ_LEN(MAX_SEQ_LEN), .Q_SHIFT(Q_SHIFT), .K_SHIFT(K_SHIFT),
+        .MAX_SEQ_LEN(MAX_SEQ_LEN), .NUM_LAYERS(NUM_LAYERS), .Q_SHIFT(Q_SHIFT), .K_SHIFT(K_SHIFT),
         .V_SHIFT(V_SHIFT), .OUT_SHIFT(OUT_SHIFT),
         .SCORE_MULT(SCORE_MULT), .SCORE_SHIFT(SCORE_SHIFT)
     ) attn_inst (
@@ -238,7 +240,8 @@ module transformer_engine #(
         .x_load(attn_x_load), .x_load_addr(attn_x_addr), .x_load_data(attn_x_data),
         .w_load(attn_w_load), .w_load_addr(attn_w_addr), .w_load_data(attn_w_data),
         .b_load(attn_b_load), .b_load_addr(attn_b_addr), .b_load_data(attn_b_data),
-        .start(attn_start), .seq_len(attn_seq_len),
+        .start(attn_start), .seq_len(attn_seq_len), .cache_len(attn_cache_len),
+        .layer_idx(l_cnt[(NUM_LAYERS<=1 ? 1 : $clog2(NUM_LAYERS))-1:0]),
         .busy(attn_busy), .done(attn_done), .error(attn_error),
         .y_valid(attn_y_valid), .y_addr(attn_y_addr), .y_data(attn_y_data)
     );
@@ -311,7 +314,7 @@ module transformer_engine #(
             l_cnt <= 0; t_cnt <= 0; c_cnt <= 0; e_cnt <= 0; p_cnt <= 0;
             tok_val <= 0;
             attn_x_load <= 0; attn_w_load <= 0; attn_w_addr <= 0;
-            attn_b_load <= 0; attn_b_addr <= 0; attn_start <= 0; attn_seq_len <= 0;
+            attn_b_load <= 0; attn_b_addr <= 0; attn_start <= 0; attn_seq_len <= 0; attn_cache_len <= 0;
             ln_start <= 0;
             fc1_start <= 0; fc2_start <= 0; lm_start <= 0;
         end else begin
@@ -326,7 +329,7 @@ module transformer_engine #(
                         end else begin
                             error <= 1'b0; busy <= 1'b1;
                             seq_len_reg <= seq_len;
-                            t_cnt <= 0; c_cnt <= 0; e_cnt <= 0; p_cnt <= 0;
+                            t_cnt <= cache_len; c_cnt <= 0; e_cnt <= 0; p_cnt <= 0;
                             l_cnt <= 0; blk_base <= TOK_SIZE + POS_SIZE;
                             rom_owner <= OWN_CTRL;
                             state <= S_EMB_TOK_ISS;
@@ -343,7 +346,7 @@ module transformer_engine #(
                     if (c_cnt == D_MODEL-1) begin
                         c_cnt <= 0;
                         if (t_cnt == seq_len_reg-1) begin
-                            t_cnt <= 0;
+                            t_cnt <= cache_len;
                             state <= S_LN1_START;
                         end else begin
                             t_cnt <= t_cnt + 1;
@@ -369,7 +372,7 @@ module transformer_engine #(
                     if (ln_y_wr_en) tmp[ln_tok*D_MODEL + ln_y_addr] <= ln_y_data;
                     if (ln_done) begin
                         if (t_cnt == seq_len_reg-1) begin
-                            t_cnt <= 0; p_cnt <= 0; e_cnt <= 0;
+                            t_cnt <= cache_len; p_cnt <= 0; e_cnt <= 0;
                             rom_owner <= OWN_CTRL;
                             state <= S_AW_ISS;
                         end else begin
@@ -400,7 +403,7 @@ module transformer_engine #(
                     if (e_cnt == D_MODEL-1) begin
                         e_cnt <= 0;
                         if (p_cnt == 3) begin
-                            t_cnt <= 0; c_cnt <= 0;
+                            t_cnt <= cache_len; c_cnt <= 0;
                             attn_x_load <= 1'b1;
                             state <= S_ATTN_X;
                         end else begin
@@ -418,7 +421,7 @@ module transformer_engine #(
                     if (c_cnt == D_MODEL-1) begin
                         c_cnt <= 0;
                         if (t_cnt == seq_len_reg-1) begin
-                            t_cnt <= 0;
+                            t_cnt <= cache_len;
                             attn_x_load <= 1'b0;
                             state <= S_ATTN_START;
                         end else begin
@@ -433,6 +436,7 @@ module transformer_engine #(
                 S_ATTN_START: begin
                     attn_start <= 1'b1;
                     attn_seq_len <= seq_len_reg;
+                    attn_cache_len <= cache_len;
                     state <= S_ATTN_RUN;
                 end
                 S_ATTN_RUN: begin
@@ -440,7 +444,7 @@ module transformer_engine #(
                     if (attn_y_valid)
                         act[attn_y_addr] <= saturate(act[attn_y_addr] + attn_y_data);
                     if (attn_done) begin
-                        t_cnt <= 0;
+                        t_cnt <= cache_len;
                         state <= S_LN2_START;
                     end
                 end
@@ -459,7 +463,7 @@ module transformer_engine #(
                     if (ln_y_wr_en) tmp[ln_tok*D_MODEL + ln_y_addr] <= ln_y_data;
                     if (ln_done) begin
                         if (t_cnt == seq_len_reg-1) begin
-                            t_cnt <= 0;
+                            t_cnt <= cache_len;
                             state <= S_FC1_START;
                         end else begin
                             t_cnt <= t_cnt + 1;
@@ -496,7 +500,7 @@ module transformer_engine #(
                             saturate(act[t_cnt*D_MODEL + fc2_y_addr] + fc2_y_data);
                     if (fc2_done) begin
                         if (t_cnt == seq_len_reg-1) begin
-                            t_cnt <= 0;
+                            t_cnt <= cache_len;
                             if (l_cnt == NUM_LAYERS-1) begin
                                 state <= S_FLN_START;
                             end else begin
@@ -525,7 +529,7 @@ module transformer_engine #(
                     if (ln_y_wr_en) tmp[ln_tok*D_MODEL + ln_y_addr] <= ln_y_data;
                     if (ln_done) begin
                         if (t_cnt == seq_len_reg-1) begin
-                            t_cnt <= 0;
+                            t_cnt <= cache_len;
                             state <= S_LM_START;
                         end else begin
                             t_cnt <= t_cnt + 1;

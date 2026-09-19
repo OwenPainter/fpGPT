@@ -42,7 +42,7 @@ On-chip, `fpga_top.v` connects UART to `generation_controller.v`, which wraps
 `transformer_engine.v` and owns the unified weight ROM. The engine sequences
 `embeddings → LN1 → attention → residual → LN2 → MLP → residual → final LN →
 LM head`; the controller buffers a prompt, runs one forward pass per generated
-character, picks the argmax logit, and feeds the token back.
+character, selects the next token from the top-k logits, and feeds it back.
 
 ## What works today
 
@@ -64,9 +64,10 @@ character, picks the argmax logit, and feeds the token back.
   forward pass in simulation and is checked bit-exactly against an independent
   Python integer reference (`tests/test_transformer_engine.py`).
 - **Board-level generation:** `generation_controller.v` implements prompt
-  buffering, character↔token mapping, greedy argmax sampling, token feedback,
-  and the weight ROM; `fpga_top.v` wires it to UART. Verified end-to-end in
-  simulation by `tests/test_generation_controller.py`.
+  buffering, character↔token mapping, LFSR-indexed top-k token selection
+  (`TOP_K`, default 4), token feedback, and the weight ROM; `fpga_top.v` wires
+  it to UART. Verified end-to-end in simulation by
+  `tests/test_generation_controller.py`.
 - **FPGA scaffolding:** UART RX/TX, LED debug, and a Quartus project
   (`fpga/fpGPT.qpf`, `.qsf`, `.sdc`).
 - **Attention verification:** `tests/test_attention.py` passes under Icarus
@@ -83,13 +84,16 @@ character, picks the argmax logit, and feeds the token back.
   dimensions, per-layer requant shifts) and a uniform-width engine image at
   `build/weights/engine/weights_unified.hex`, so `fpga_top.v`'s defaults no
   longer have to be synced by hand.
-- `hdl/gpt_controller.v` and `hdl/transformer_block.v` are now-unused stubs and
-  are not in the Quartus project.
-- `model/fixed_point.py` now defines the integer-reference API imported by
+- `model/fixed_point.py` defines the integer-reference API imported by
   `model/validate_fixed.py` and `tests/test_fixed_point.py`; those run.
-- There is no KV cache (each token recomputes the whole sequence), no
-  temperature/top-k sampling, and no synthesis, timing, or board bring-up.
-- `tests/tb_fpga_top.v` still tests the old echo stub and is stale.
+- The top-k selection added to `generation_controller.v` is unverified: the RTL
+  test suite could not be run because `iverilog`/`vvp` are not installed in this
+  environment.
+- There is no KV cache that actually skips recomputation (each token still runs
+  the full sequence), no temperature sampling, and no synthesis, timing, or
+  board bring-up.
+- `tests/tb_fpga_top.v` still tests the old echo stub and is stale;
+  `tests/tb_transformer_block.v` is an orphaned testbench.
 
 ## Quick start
 
@@ -169,10 +173,10 @@ fpGPT/
 ├── model/
 │   ├── micro_gpt.py           # Character-level GPT + tokenizer
 │   ├── train.py               # Training script
-│   ├── fixed_point.py         # STALE emulator (missing API; see checklist)
-│   └── validate_fixed.py      # Fixed vs PyTorch CLI (broken import)
+│   ├── fixed_point.py         # Integer-reference operators
+│   └── validate_fixed.py      # Fixed vs PyTorch CLI
 ├── hdl/
-│   ├── attention.v            # Causal multi-head attention (verified)
+│   ├── attention.v            # Causal multi-head attention, per-layer KV cache (verified)
 │   ├── dense_layer.v          # Time-multiplexed linear engine
 │   ├── layer_norm.v           # Sequential integer LayerNorm
 │   ├── mac_unit.v             # DSP MAC primitive
@@ -182,21 +186,18 @@ fpGPT/
 │   ├── fixed_layer_norm.v     # Exact-scale LayerNorm operator
 │   ├── fixed_residual.v       # Scale-aligning residual add
 │   ├── fixed_gelu.v           # Table-based GELU
-│   ├── transformer_engine.v   # Full forward-pass sequencer (verified)
-│   ├── transformer_block.v    # Unused STUB
-│   └── gpt_controller.v       # Unused STUB (UART echo)
+│   └── transformer_engine.v   # Full forward-pass sequencer (verified)
 ├── fpga/
 │   ├── fpga_top.v             # DE1-SoC top level (UART ↔ controller)
-│   ├── generation_controller.v# Prompt buffer, argmax, token feedback, ROM
+│   ├── generation_controller.v# Prompt buffer, top-k selection, token feedback, ROM
 │   ├── uart_rx.v, uart_tx.v
 │   └── fpGPT.qpf, fpGPT.qsf, fpGPT.sdc
 ├── tests/
 │   ├── test_attention.py            # RTL vs integer reference (passes)
 │   ├── test_transformer_engine.py   # Full-pass RTL test
 │   ├── test_generation_controller.py# Board-level end-to-end RTL test
-│   ├── test_fixed_point.py          # Fails at import (missing API)
-│   ├── test_transformer_block.py    # pytest; emulator smoke test
-│   └── tb_fpga_top.v, tb_transformer_block.v  # Stale stub testbenches
+│   ├── test_fixed_point.py          # Integer-reference vs PyTorch / RTL
+│   └── tb_fpga_top.v, tb_transformer_block.v  # Stale/orphaned testbenches
 ├── docs/
 │   └── fixed_point.md         # Numeric contract and integration guide
 └── hdl/attention.md           # Attention interface and numeric contract
@@ -218,16 +219,17 @@ fpGPT/
 ## Testing
 
 - `python3 -m unittest tests.test_attention -v` — attention RTL vs an
-  independent integer reference. **Passes** (requires `iverilog`/`vvp`).
+  independent integer reference. Requires `iverilog`/`vvp`; skips otherwise.
 - `python3 -m unittest tests.test_transformer_engine -v` — full forward pass in
   RTL vs a Python integer model.
 - `python3 -m unittest tests.test_generation_controller -v` — UART-style prompt
   through `generation_controller` to a generated byte, vs the integer
   reference. Exercises the whole board datapath in simulation.
-- `python3 -m unittest discover -s tests -v` — collects everything; passes
-  except `tests/test_transformer_block.py`, which needs `pytest`.
-- `pytest tests/test_transformer_block.py` — needs `pytest` and `torch`
-  (`pytest` is not currently listed in `requirements.txt`).
+- `python3 -m unittest discover -s tests -v` — collects everything, including
+  `test_fixed_point.py` (its integer-reference vs PyTorch and RTL checks).
+  `test_fixed_point.py` must be run through `discover` because it imports
+  `test_attention` by module name. RTL tests skip when `iverilog`/`vvp` are not
+  on `PATH`.
 
 ## Documentation
 
@@ -256,9 +258,10 @@ fpGPT/
       mixed-width ROM (64-bit biases, 32-bit Q14 gamma / 32-bit beta); a
       uniform-width engine image is emitted today, but per-layer shifts and the
       accumulator-domain biases still need wiring
-- [ ] Emit a configured `transformer_engine` / `generation_controller` wrapper
-      and board parameters (`ROM_DEPTH`, `W_ADDR_WIDTH`, shifts) from
-      `compile.py`
+- [x] Emit board parameters (`ROM_DEPTH`, `W_ADDR_WIDTH`, shifts) and the
+      uniform-width engine image from `compile.py`
+- [ ] Emit a configured `generation_controller` wrapper and wire it into
+      `fpga_top.v` instead of hand-maintained defaults
 
 ### RTL and system integration
 - [x] `attention.v`: full causal multi-head attention
@@ -267,15 +270,15 @@ fpGPT/
 - [x] `fixed_linear.v`, `fixed_layer_norm.v`, `fixed_residual.v`,
       `fixed_gelu.v`
 - [x] `transformer_engine.v`: complete forward-pass sequencer
-- [x] `generation_controller.v`: prompt buffer, byte↔token mapping, greedy
-      argmax, token feedback, weight ROM
+- [x] `generation_controller.v`: prompt buffer, byte↔token mapping, top-k
+      selection, token feedback, weight ROM
 - [x] `fpga_top.v` wired to `generation_controller` over UART
-- [ ] Delete or repurpose the unused `transformer_block.v` and
-      `gpt_controller.v` stubs
+- [x] Delete the unused `transformer_block.v` and `gpt_controller.v` stubs
 - [ ] Add output buffering/backpressure (UART TX is slower than the engine)
-- [ ] Add a KV cache / incremental decoding (the engine recomputes the whole
-      sequence for every token)
-- [ ] Add sampling (temperature/top-k) instead of always greedy argmax
+- [ ] Add a KV cache / incremental decoding (the engine still recomputes the
+      whole sequence for every token)
+- [ ] Verify and finish sampling: top-k selection is present but unverified,
+      and there is no temperature control
 - [ ] Define and document a stable UART/host protocol (prompt framing,
       generation length, status)
 
@@ -285,8 +288,8 @@ fpGPT/
 - [x] Quartus project includes the real engine path (`transformer_engine.v`,
       `attention.v`, `layer_norm.v`, `dense_layer.v`, `mac_unit.v`,
       `activation.v`, `rom_sync.v`)
-- [ ] Place the generated `weights_unified.hex` where Quartus can find it and
-      remove the relative-path fragility
+- [ ] Place the generated engine image (`weights/engine/weights_unified.hex`)
+      where Quartus can find it and remove the relative-path fragility
 - [ ] Run Quartus synthesis/fit; record ALM, DSP, and M10K usage
 - [ ] Achieve timing closure and record Fmax
 - [ ] Verify UART pin assignments against actual DE1-SoC wiring
@@ -296,9 +299,11 @@ fpGPT/
 - [x] Attention RTL vs integer-reference tests
 - [x] Full forward-pass RTL test (`test_transformer_engine.py`)
 - [x] Board-level end-to-end RTL test (`test_generation_controller.py`)
-- [ ] Fix `tests/test_fixed_point.py` collection failure
-- [ ] Replace or delete the stale `tb_fpga_top.v` / `tb_transformer_block.v`
-- [ ] Add `pytest` to `requirements.txt` (used by `test_transformer_block.py`)
+- [x] Restore `tests/test_fixed_point.py` collection (integer-reference vs
+      PyTorch / RTL)
+- [ ] Replace or delete the stale `tb_fpga_top.v` / orphaned
+      `tb_transformer_block.v`
+- [ ] Install `iverilog`/`vvp` and actually run the RTL tests
 - [ ] Add CI that installs `torch` and `iverilog` and runs the full suite
 - [ ] Add an end-to-end test from checkpoint → compiled ROM → board RTL
 

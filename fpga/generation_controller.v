@@ -43,7 +43,8 @@ module generation_controller #(
     parameter ROM_DEPTH    = 212352,
     parameter ROM_MEM_FILE = "weights/engine/weights_unified.hex",
 
-    parameter GEN_TOKENS   = 16
+    parameter GEN_TOKENS   = 16,
+    parameter TOP_K        = 4
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -68,15 +69,22 @@ module generation_controller #(
 
     reg [1:0]  state;
     reg [LEN_W-1:0]   seq_len;
+    reg [LEN_W-1:0]   cache_len;
     reg [LEN_W-1:0]   gen_count;
     reg               eng_start;
     reg               tok_load;
     reg [TOK_AW-1:0]  tok_addr;
     reg [TOKID_W-1:0] tok_data;
 
-    reg signed [DATA_WIDTH-1:0] best_val;
-    reg [VOC_AW-1:0]            best_idx;
-    reg                         seen;
+    reg signed [DATA_WIDTH-1:0] topk_val [0:3];
+    reg [VOC_AW-1:0]            topk_idx [0:3];
+    reg [15:0]                  lfsr;
+    wire                        lfsr_fb = lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr[10];
+    wire [1:0]                  rand_idx = (TOP_K == 4) ? lfsr[1:0] :
+                                           (TOP_K == 2) ? {1'b0, lfsr[0]} : 2'd0;
+    wire [VOC_AW-1:0]           selected_idx = (rand_idx == 0) ? topk_idx[0] :
+                                               (rand_idx == 1) ? topk_idx[1] :
+                                               (rand_idx == 2) ? topk_idx[2] : topk_idx[3];
 
     wire        eng_busy, eng_done, eng_error, eng_logits_valid;
     wire [VOC_AW-1:0] eng_logits_addr;
@@ -95,7 +103,7 @@ module generation_controller #(
         .LM_SHIFT(LM_SHIFT), .W_ADDR_WIDTH(W_ADDR_WIDTH)
     ) engine (
         .clk(clk), .rst_n(rst_n),
-        .start(eng_start), .seq_len(seq_len),
+        .start(eng_start), .seq_len(seq_len), .cache_len(cache_len),
         .tok_load(tok_load), .tok_addr(tok_addr), .tok_data(tok_data),
         .busy(eng_busy), .done(eng_done), .error(eng_error),
         .logits_valid(eng_logits_valid), .logits_addr(eng_logits_addr),
@@ -137,20 +145,28 @@ module generation_controller #(
         if (!rst_n) begin
             state           <= S_COLLECT;
             seq_len         <= 0;
+            cache_len       <= 0;
             gen_count       <= 0;
             eng_start       <= 1'b0;
             tok_load        <= 1'b0;
             tok_addr        <= 0;
             tok_data        <= 0;
-            best_val        <= MIN_LOGIT;
-            best_idx        <= 0;
-            seen            <= 1'b0;
+            topk_val[0]     <= MIN_LOGIT;
+            topk_val[1]     <= MIN_LOGIT;
+            topk_val[2]     <= MIN_LOGIT;
+            topk_val[3]     <= MIN_LOGIT;
+            topk_idx[0]     <= 0;
+            topk_idx[1]     <= 0;
+            topk_idx[2]     <= 0;
+            topk_idx[3]     <= 0;
+            lfsr            <= 16'hACE1;
             token_out       <= 0;
             token_out_valid <= 1'b0;
             busy            <= 1'b0;
         end else begin
             token_out_valid <= 1'b0;
             tok_load        <= 1'b0;
+            lfsr            <= {lfsr[14:0], lfsr_fb};
 
             case (state)
                 // Accumulate a prompt; a CR/LF starts decoding.
@@ -162,6 +178,7 @@ module generation_controller #(
                             if (seq_len != 0) begin
                                 busy      <= 1'b1;
                                 gen_count <= 0;
+                                cache_len <= 0;
                                 state     <= S_GEN_START;
                             end
                         end else if (seq_len < MAX_SEQ_LEN) begin
@@ -175,19 +192,30 @@ module generation_controller #(
 
                 S_GEN_START: begin
                     eng_start <= 1'b1;
-                    best_val  <= MIN_LOGIT;
-                    best_idx  <= 0;
-                    seen      <= 1'b0;
+                    topk_val[0] <= MIN_LOGIT;
+                    topk_val[1] <= MIN_LOGIT;
+                    topk_val[2] <= MIN_LOGIT;
+                    topk_val[3] <= MIN_LOGIT;
                     state     <= S_GEN_RUN;
                 end
 
                 S_GEN_RUN: begin
                     eng_start <= 1'b0;
                     if (eng_logits_valid) begin
-                        if (!seen || eng_logits_data > best_val) begin
-                            best_val <= eng_logits_data;
-                            best_idx <= eng_logits_addr;
-                            seen     <= 1'b1;
+                        if (eng_logits_data > topk_val[0]) begin
+                            topk_val[0] <= eng_logits_data; topk_idx[0] <= eng_logits_addr;
+                            topk_val[1] <= topk_val[0];     topk_idx[1] <= topk_idx[0];
+                            topk_val[2] <= topk_val[1];     topk_idx[2] <= topk_idx[1];
+                            topk_val[3] <= topk_val[2];     topk_idx[3] <= topk_idx[2];
+                        end else if (eng_logits_data > topk_val[1]) begin
+                            topk_val[1] <= eng_logits_data; topk_idx[1] <= eng_logits_addr;
+                            topk_val[2] <= topk_val[1];     topk_idx[2] <= topk_idx[1];
+                            topk_val[3] <= topk_val[2];     topk_idx[3] <= topk_idx[2];
+                        end else if (eng_logits_data > topk_val[2]) begin
+                            topk_val[2] <= eng_logits_data; topk_idx[2] <= eng_logits_addr;
+                            topk_val[3] <= topk_val[2];     topk_idx[3] <= topk_idx[2];
+                        end else if (eng_logits_data > topk_val[3]) begin
+                            topk_val[3] <= eng_logits_data; topk_idx[3] <= eng_logits_addr;
                         end
                     end
                     if (eng_done) state <= S_GEN_EMIT;
@@ -195,12 +223,13 @@ module generation_controller #(
 
                 // Emit the winning token and feed it back into the sequence.
                 S_GEN_EMIT: begin
-                    token_out       <= id_to_byte(best_idx);
+                    token_out       <= id_to_byte(selected_idx);
                     token_out_valid <= 1'b1;
                     if (seq_len < MAX_SEQ_LEN) begin
                         tok_load <= 1'b1;
                         tok_addr <= seq_len[TOK_AW-1:0];
-                        tok_data <= best_idx;
+                        tok_data <= selected_idx;
+                        cache_len <= seq_len;
                         seq_len  <= seq_len + 1'b1;
                     end
                     gen_count <= gen_count + 1'b1;

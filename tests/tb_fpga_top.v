@@ -28,7 +28,8 @@ module tb_fpga_top;
     fpga_top #(
         .D_MODEL(DIM), .NUM_HEADS(HEADS), .MAX_SEQ_LEN(LEN), .NUM_LAYERS(LAYERS),
         .D_FF(DFF), .VOCAB_SIZE(VOCAB), .W_ADDR_WIDTH(12),
-        .ROM_DEPTH(ROM_DEPTH), .ROM_MEM_FILE("no_such_file.hex"), .GEN_TOKENS(1)
+        .ROM_DEPTH(ROM_DEPTH), .ROM_MEM_FILE("no_such_file.hex"), .GEN_TOKENS(1),
+        .TOP_K(1)
     ) dut (
         .CLOCK_50(clk),
         .KEY({3'b111, rst_n}),
