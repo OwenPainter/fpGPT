@@ -37,7 +37,7 @@ test-board:
 	else \
 		mkdir -p $(BUILD_DIR); \
 		$(IVERILOG) -g2012 -s $(BOARD_TOP) -Ifpga -Ihdl -o $(BUILD_DIR)/$(BOARD_TOP) \
-			$(HDL_STUB) $(HDL_SRC) $(BOARD_TB) && \
+			$(BOARD_TB) $(HDL_STUB) $(HDL_SRC) && \
 		$(VVP) $(BUILD_DIR)/$(BOARD_TOP); \
 	fi
 
