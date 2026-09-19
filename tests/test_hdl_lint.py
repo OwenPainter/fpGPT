@@ -60,7 +60,7 @@ def hdl_sources():
 def hdl_modules():
     modules = []
     for path in hdl_sources():
-        match = _MODULE_RE.search(path.read_text())
+        match = _MODULE_RE.search(path.read_text(encoding="utf-8"))
         if match:
             modules.append((match.group(1), path))
     return modules

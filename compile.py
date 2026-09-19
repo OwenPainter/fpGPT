@@ -122,7 +122,7 @@ def compile_model(args):
 
 def _write_params_header(ir, filepath: str):
     """Generate a Verilog parameters header (.vh) with model constants."""
-    with open(filepath, 'w') as f:
+    with open(filepath, 'w', encoding='utf-8') as f:
         f.write("// ===================================================\n")
         f.write("// fpGPT Compiler -- Auto-generated Model Parameters\n")
         f.write("// DO NOT EDIT -- regenerate with: python compile.py\n")
@@ -180,7 +180,7 @@ def _write_params_header(ir, filepath: str):
 
 def _write_weight_rom(ir, filepath: str):
     """Generate a unified weight ROM module that loads all .hex files."""
-    with open(filepath, 'w') as f:
+    with open(filepath, 'w', encoding='utf-8') as f:
         f.write("// ===================================================\n")
         f.write("// fpGPT Compiler -- Auto-generated Unified Weight ROM\n")
         f.write("// Infers Cyclone V M10K block RAM via $readmemh\n")
@@ -232,7 +232,7 @@ def _write_board_params(ir, ir_engine, filepath: str,
         return getattr(layer, "requant_shift", 0)
 
     first = ir.blocks[0]
-    with open(filepath, 'w') as f:
+    with open(filepath, 'w', encoding='utf-8') as f:
         f.write("// ===================================================\n")
         f.write("// fpGPT Compiler -- Auto-generated Board Parameters\n")
         f.write("// DO NOT EDIT -- regenerate with: python compile.py\n")
