@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+addopts = "-ra"
+norecursedirs = ["build", ".git", "__pycache__", "obj_dir"]

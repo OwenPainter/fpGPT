@@ -145,10 +145,9 @@ measured.
 
 ## Verification
 
-`tests/test_fixed_point.py` is intended to require exact RTL/integer agreement
-for attention, linear layers, LayerNorm, residuals and GELU, and PyTorch
-comparisons of attention, LayerNorm and full-model logits at both precisions.
-**It does not currently run**, because its imported emulator API is missing.
+`tests/test_fixed_point.py` requires exact RTL/integer agreement for attention,
+linear layers, LayerNorm, residuals and GELU, plus PyTorch comparisons of
+attention, LayerNorm and full-model logits at both precisions.
 
 What is verified today:
 
@@ -164,6 +163,10 @@ What is verified today:
 - `tests/test_generation_controller.py` drives `generation_controller.v` the way
   UART would, with a tiny model ROM, and checks that the emitted byte matches
   the argmax of the integer reference's final-position logits.
+- `tests/tb_fpga_top.v` runs the same UART path through `fpga_top.v` with a tiny
+  zeroed model and checks a character is generated.
+- `tests/test_throughput.py` measures cycles/token in RTL and reports tok/s at
+  the 50 MHz and 150 MHz targets (default shape: 963,686 cycles/token).
 
 Tolerances in the fixed-point tests apply to deterministic fixtures, not
 arbitrary trained checkpoints.

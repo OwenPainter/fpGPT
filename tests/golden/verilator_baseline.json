@@ -1,0 +1,33 @@
+{
+  "verilator": "5.050",
+  "warnings": {
+    "fpga/fpga_top.v::SYNCASYNCNET": 1,
+    "fpga/fpga_top.v::UNUSEDSIGNAL": 2,
+    "fpga/generation_controller.v::UNUSEDSIGNAL": 2,
+    "fpga/generation_controller.v::VARHIDDEN": 1,
+    "fpga/generation_controller.v::WIDTHEXPAND": 1,
+    "fpga/generation_controller.v::WIDTHTRUNC": 1,
+    "fpga/pll_150.v::PINCONNECTEMPTY": 1,
+    "fpga/uart_rx.v::WIDTHEXPAND": 3,
+    "fpga/uart_tx.v::WIDTHEXPAND": 3,
+    "hdl/activation.v::UNUSEDSIGNAL": 1,
+    "hdl/attention.v::WIDTHEXPAND": 5,
+    "hdl/attention.v::WIDTHTRUNC": 3,
+    "hdl/dense_layer.v::WIDTHEXPAND": 8,
+    "hdl/dense_layer.v::WIDTHTRUNC": 2,
+    "hdl/fixed_layer_norm.v::SYNCASYNCNET": 1,
+    "hdl/fixed_layer_norm.v::WIDTHEXPAND": 3,
+    "hdl/fixed_layer_norm.v::WIDTHTRUNC": 1,
+    "hdl/fixed_linear.v::SYNCASYNCNET": 1,
+    "hdl/fixed_linear.v::WIDTHEXPAND": 3,
+    "hdl/fixed_linear.v::WIDTHTRUNC": 1,
+    "hdl/fixed_residual.v::WIDTHEXPAND": 2,
+    "hdl/gpt_controller.v::UNUSEDPARAM": 2,
+    "hdl/layer_norm.v::WIDTHEXPAND": 9,
+    "hdl/layer_norm.v::WIDTHTRUNC": 6,
+    "hdl/transformer_block.v::UNUSEDPARAM": 3,
+    "hdl/transformer_engine.v::UNUSEDSIGNAL": 3,
+    "hdl/transformer_engine.v::WIDTHEXPAND": 31,
+    "hdl/transformer_engine.v::WIDTHTRUNC": 2
+  }
+}

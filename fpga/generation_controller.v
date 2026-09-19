@@ -41,7 +41,7 @@ module generation_controller #(
 
     parameter W_ADDR_WIDTH = 18,
     parameter ROM_DEPTH    = 212352,
-    parameter ROM_MEM_FILE = "weights/engine/weights_unified.hex",
+    parameter ROM_MEM_FILE = "weights_unified.hex",
 
     parameter GEN_TOKENS   = 16
 ) (
@@ -53,7 +53,10 @@ module generation_controller #(
     input  wire        token_valid,
     output reg  [7:0]  token_out,
     output reg         token_out_valid,
-    output reg         busy
+    output reg         busy,
+
+    // Throughput hook: cycles consumed by the most recent generation burst.
+    output reg  [31:0] gen_cycles
 );
     localparam TOKID_W = (VOCAB_SIZE <= 1) ? 1 : $clog2(VOCAB_SIZE);
     localparam TOK_AW  = (MAX_SEQ_LEN <= 1) ? 1 : $clog2(MAX_SEQ_LEN);
@@ -148,9 +151,12 @@ module generation_controller #(
             token_out       <= 0;
             token_out_valid <= 1'b0;
             busy            <= 1'b0;
+            gen_cycles      <= 32'd0;
         end else begin
             token_out_valid <= 1'b0;
             tok_load        <= 1'b0;
+            if (state != S_COLLECT)
+                gen_cycles <= gen_cycles + 32'd1;
 
             case (state)
                 // Accumulate a prompt; a CR/LF starts decoding.
@@ -160,9 +166,10 @@ module generation_controller #(
                     if (token_valid) begin
                         if (token_in == 8'h0A || token_in == 8'h0D) begin
                             if (seq_len != 0) begin
-                                busy      <= 1'b1;
-                                gen_count <= 0;
-                                state     <= S_GEN_START;
+                                busy       <= 1'b1;
+                                gen_count  <= 0;
+                                gen_cycles <= 32'd0;
+                                state      <= S_GEN_START;
                             end
                         end else if (seq_len < MAX_SEQ_LEN) begin
                             tok_load <= 1'b1;

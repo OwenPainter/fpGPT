@@ -28,13 +28,18 @@ Legend: impact on tok/s, effort, and the files involved.
       `W_ADDR_WIDTH`, per-stage shifts, model dims) and a configured
       `generation_controller`/engine wrapper, so `fpga_top.v` defaults cannot
       drift from the compiled model by hand.
-- [ ] **Fix the ROM init path for Quartus.** `rom_sync` uses
-      `ROM_MEM_FILE="weights/weights_unified.hex"`; the project lives in `fpga/`
-      while the image is written to `build/weights/`. Add it as a Quartus
-      memory-init file / correct search path and verify M10K inference.
-- [ ] **Add a cycle counter + throughput testbench** so every change is
-      quantified in tok/s (`transformer_engine.v` / `generation_controller.v`
-      plus a `tests/` harness). No baseline exists today.
+- [x] **Fix the ROM init path for Quartus.** `rom_sync` uses
+      `ROM_MEM_FILE="weights_unified.hex"`; `build.tcl` copies the compiled
+      engine image into `fpga/`, the QSF adds `SEARCH_PATH
+      ../build/weights/engine` and registers it via `MIF_FILE`, and
+      `VERILOG_INCLUDE_FILE` handles `board_params.vh`. M10K inference is not
+      yet confirmed by a fit.
+- [x] **Add a cycle counter + throughput testbench** so every change is
+      quantified in tok/s (`generation_controller.v` exposes `gen_cycles`;
+      `tests/test_throughput.py` reports tok/s). Measured baseline for the
+      default shape (d_model=64, 4 layers): **963,686 cycles/token → 51.9 tok/s
+      @ 50 MHz, 155.7 tok/s @ 150 MHz**. The 500 tok/s target still needs the
+      P1/P2 work below.
 
 ## P1 — algorithmic speedups (largest tok/s gains)
 
@@ -82,14 +87,18 @@ Legend: impact on tok/s, effort, and the files involved.
 ## P4 — board bring-up
 
 - [ ] **Timing/area closure in Quartus** (no `fit`/STA has been run; no `.sof`).
-- [ ] **Verify pin assignments** in `fpga/fpGPT.qsf` — UART pins are
-      placeholders on GPIO_0; confirm against the DE1-SoC manual and the
-      actual USB-UART adapter wiring.
-- [ ] **HPS or GPIO UART decision** (the DE1-SoC has no direct FPGA-to-USB
-      UART without the HPS or an external adapter).
+      `fpga/build.tcl`, `fpga/timing.tcl`, `pll_150.v` and `fpGPT.sdc` are in
+      place, but 150 MHz is unverified and likely misses.
+- [x] **Verify pin assignments** in `fpga/fpGPT.qsf` — UART is on GPIO_0[0]
+      (`PIN_AC18`) / GPIO_0[1] (`PIN_Y17`), confirmed against the DE1-SoC pin
+      table.
+- [x] **HPS or GPIO UART decision** — external 3.3 V USB-TTL adapter on
+      GPIO_0, documented in `fpga/PROGRAMMING.md` (the onboard USB-UART is HPS).
 - [ ] **On-board smoke test**: program the `.sof` via USB-Blaster, open a
       115200 8N1 terminal, send a prompt + CR/LF, confirm streamed characters.
-- [ ] **Persistent config**: convert `.sof` to `.pof`/`.jic` for flash boot.
+      `tests/tb_fpga_top.v` now exercises the engine path in simulation.
+- [ ] **Persistent config**: convert `.sof` to `.pof`/`.jic` for flash boot
+      (steps documented in `fpga/PROGRAMMING.md`).
 
 ## Critical path to a working 500 tok/s demo
 

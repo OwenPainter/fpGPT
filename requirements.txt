@@ -1,3 +1,6 @@
 torch>=2.0.0
 numpy>=1.24.0
 jinja2>=3.1.0
+
+# Test tooling (pinned so `make test` is reproducible)
+pytest==9.1.1

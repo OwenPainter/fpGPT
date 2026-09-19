@@ -23,7 +23,7 @@ import torch.nn.functional as F
 # Default model configuration
 # ─────────────────────────────────────────────────
 DEFAULT_CONFIG = {
-    "vocab_size": 64,       # Printable ASCII subset (space through '~' minus some)
+    "vocab_size": 98,       # 3 special tokens + full printable ASCII (32..126)
     "max_seq_len": 64,      # Maximum context window
     "d_model": 64,          # Embedding / hidden dimension
     "num_heads": 4,         # Number of attention heads
@@ -34,48 +34,11 @@ DEFAULT_CONFIG = {
 
 
 # ─────────────────────────────────────────────────
-# Character tokenizer (simple ASCII mapping)
+# Character tokenizer (single source of truth: model/tokenizer.py)
 # ─────────────────────────────────────────────────
-class CharTokenizer:
-    """
-    Maps printable ASCII characters to integer token IDs [0, vocab_size).
-
-    Special tokens:
-      0 = <pad>
-      1 = <sos> (start of sequence)
-      2 = <eos> (end of sequence)
-      3..vocab_size-1 = printable characters
-    """
-
-    def __init__(self, vocab_size: int = 64):
-        self.vocab_size = vocab_size
-        self.special_tokens = {"<pad>": 0, "<sos>": 1, "<eos>": 2}
-        self.num_special = len(self.special_tokens)
-
-        # Build char <-> id mapping for printable ASCII
-        printable = [chr(i) for i in range(32, 127)]  # space through '~'
-        max_chars = vocab_size - self.num_special
-        self.chars = printable[:max_chars]
-
-        self.char_to_id = {c: i + self.num_special for i, c in enumerate(self.chars)}
-        self.id_to_char = {i + self.num_special: c for i, c in enumerate(self.chars)}
-
-        # Add special tokens to reverse map
-        for tok, idx in self.special_tokens.items():
-            self.id_to_char[idx] = tok
-
-    def encode(self, text: str) -> list:
-        """Convert a string to a list of token IDs."""
-        return [self.char_to_id.get(c, self.special_tokens["<pad>"]) for c in text]
-
-    def decode(self, ids: list) -> str:
-        """Convert a list of token IDs back to a string."""
-        chars = []
-        for i in ids:
-            c = self.id_to_char.get(i, "")
-            if c not in self.special_tokens:
-                chars.append(c)
-        return "".join(chars)
+# Re-exported so existing imports (`from model.micro_gpt import CharTokenizer`)
+# keep working; the implementation lives in model.tokenizer.
+from .tokenizer import CharTokenizer, SPECIAL_TOKENS  # noqa: F401
 
 
 # ─────────────────────────────────────────────────

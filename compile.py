@@ -213,12 +213,17 @@ def _write_weight_rom(ir, filepath: str):
         f.write(f"endmodule\n")
 
 
-def _write_board_params(ir, ir_engine, filepath: str):
-    """Generate a parameters header for the board/engine (fpga_top).
+def _write_board_params(ir, ir_engine, filepath: str,
+                        rom_mem_file: str = "weights_unified.hex",
+                        gen_tokens: int = 16,
+                        sys_clk_hz: int = 150000000,
+                        baud_rate: int = 115200):
+    """Generate the board parameter header consumed by fpga/fpga_top.v.
 
-    ``ir`` is the mixed-width fixed-contract model; ``ir_engine`` is the
-    uniform-width model whose image the ROM-based engine consumes. This keeps
-    the FPGA defaults from drifting out of sync with a compiled checkpoint.
+    Emits the ``FPGPT_*`` macro contract that fpga/board_params.vh defines and
+    fpga/build.tcl copies in. ``ir`` is the mixed-width fixed-contract model;
+    ``ir_engine`` is the uniform-width model whose image the ROM-based engine
+    consumes, so ROM geometry comes from ``ir_engine``.
     """
     depth = ir_engine.total_weight_bytes
     addr_width = max(1, (depth - 1).bit_length())
@@ -226,48 +231,55 @@ def _write_board_params(ir, ir_engine, filepath: str):
     def shift(layer):
         return getattr(layer, "requant_shift", 0)
 
+    first = ir.blocks[0]
     with open(filepath, 'w') as f:
         f.write("// ===================================================\n")
         f.write("// fpGPT Compiler -- Auto-generated Board Parameters\n")
         f.write("// DO NOT EDIT -- regenerate with: python compile.py\n")
+        f.write("// Consumed by fpga/fpga_top.v; fpga/build.tcl copies it in.\n")
         f.write("// ===================================================\n\n")
+        f.write("`ifndef FPGPT_BOARD_PARAMS_VH\n")
+        f.write("`define FPGPT_BOARD_PARAMS_VH\n\n")
 
-        f.write("// Model architecture (must match the trained checkpoint)\n")
-        f.write(f"localparam BOARD_DATA_WIDTH   = {ir.bit_width};\n")
-        f.write(f"localparam BOARD_VOCAB_SIZE   = {ir.vocab_size};\n")
-        f.write(f"localparam BOARD_MAX_SEQ_LEN  = {ir.max_seq_len};\n")
-        f.write(f"localparam BOARD_D_MODEL      = {ir.d_model};\n")
-        f.write(f"localparam BOARD_NUM_HEADS    = {ir.num_heads};\n")
-        f.write(f"localparam BOARD_NUM_LAYERS   = {ir.num_layers};\n")
-        f.write(f"localparam BOARD_D_FF         = {ir.d_ff};\n\n")
+        f.write("// ── Model dimensions ──\n")
+        f.write(f"`define FPGPT_DATA_WIDTH      {ir.bit_width}\n")
+        f.write(f"`define FPGPT_D_MODEL         {ir.d_model}\n")
+        f.write(f"`define FPGPT_NUM_HEADS       {ir.num_heads}\n")
+        f.write(f"`define FPGPT_MAX_SEQ_LEN     {ir.max_seq_len}\n")
+        f.write(f"`define FPGPT_NUM_LAYERS      {ir.num_layers}\n")
+        f.write(f"`define FPGPT_D_FF            {ir.d_ff}\n")
+        f.write(f"`define FPGPT_VOCAB_SIZE      {ir.vocab_size}\n\n")
 
-        f.write("// Uniform-width engine ROM geometry\n")
-        f.write(f"localparam BOARD_ROM_DEPTH    = {depth};\n")
-        f.write(f"localparam BOARD_W_ADDR_WIDTH = {addr_width};\n\n")
+        f.write("// ── Weight ROM (uniform-width image consumed by transformer_engine) ──\n")
+        f.write(f"`define FPGPT_W_ADDR_WIDTH    {addr_width}\n")
+        f.write(f"`define FPGPT_ROM_DEPTH       {depth}\n")
+        f.write(f"`define FPGPT_ROM_MEM_FILE    \"{rom_mem_file}\"\n\n")
 
-        f.write("// Per-stage requantization shifts from the fixed contract.\n")
-        f.write("// transformer_engine.v currently takes one global shift per\n")
-        f.write("// projection type; the B<layer>_* values are for a per-layer engine.\n")
-        first = ir.blocks[0]
-        f.write(f"localparam ENGINE_Q_SHIFT   = {shift(first.attention.q_proj)};\n")
-        f.write(f"localparam ENGINE_K_SHIFT   = {shift(first.attention.k_proj)};\n")
-        f.write(f"localparam ENGINE_V_SHIFT   = {shift(first.attention.v_proj)};\n")
-        f.write(f"localparam ENGINE_OUT_SHIFT = {shift(first.attention.out_proj)};\n")
-        f.write(f"localparam ENGINE_FC1_SHIFT = {shift(first.mlp_fc1)};\n")
-        f.write(f"localparam ENGINE_FC2_SHIFT = {shift(first.mlp_fc2)};\n")
-        f.write(f"localparam ENGINE_LM_SHIFT  = {shift(ir.lm_head)};\n\n")
+        f.write("// ── Decode configuration ──\n")
+        f.write(f"`define FPGPT_GEN_TOKENS      {gen_tokens}\n\n")
+
+        f.write("// ── Fixed-point shifts (layer 0; engine uses one global value) ──\n")
+        f.write(f"`define FPGPT_Q_SHIFT         {shift(first.attention.q_proj)}\n")
+        f.write(f"`define FPGPT_K_SHIFT         {shift(first.attention.k_proj)}\n")
+        f.write(f"`define FPGPT_V_SHIFT         {shift(first.attention.v_proj)}\n")
+        f.write(f"`define FPGPT_OUT_SHIFT       {shift(first.attention.out_proj)}\n")
+        f.write(f"`define FPGPT_SCORE_MULT      {first.attention.score_mult}\n")
+        f.write(f"`define FPGPT_SCORE_SHIFT     {first.attention.score_shift}\n")
+        f.write(f"`define FPGPT_LN_SHIFT        7\n")
+        f.write(f"`define FPGPT_FC1_SHIFT       {shift(first.mlp_fc1)}\n")
+        f.write(f"`define FPGPT_FC2_SHIFT       {shift(first.mlp_fc2)}\n")
+        f.write(f"`define FPGPT_LM_SHIFT        {shift(ir.lm_head)}\n\n")
+
+        f.write("// ── Board / host interface ──\n")
+        f.write(f"`define FPGPT_SYS_CLK_HZ      {sys_clk_hz}\n")
+        f.write(f"`define FPGPT_BAUD_RATE       {baud_rate}\n\n")
 
         for block in ir.blocks:
             i = block.block_idx
-            f.write(f"localparam B{i}_Q_SHIFT   = {shift(block.attention.q_proj)};\n")
-            f.write(f"localparam B{i}_K_SHIFT   = {shift(block.attention.k_proj)};\n")
-            f.write(f"localparam B{i}_V_SHIFT   = {shift(block.attention.v_proj)};\n")
-            f.write(f"localparam B{i}_OUT_SHIFT = {shift(block.attention.out_proj)};\n")
-            f.write(f"localparam B{i}_FC1_SHIFT = {shift(block.mlp_fc1)};\n")
-            f.write(f"localparam B{i}_FC2_SHIFT = {shift(block.mlp_fc2)};\n")
-        f.write("\n// Attention score settings (layer 0)\n")
-        f.write(f"localparam ENGINE_SCORE_MULT  = {first.attention.score_mult};\n")
-        f.write(f"localparam ENGINE_SCORE_SHIFT = {first.attention.score_shift};\n")
+            f.write(f"// B{i}: Q={shift(block.attention.q_proj)} K={shift(block.attention.k_proj)} "
+                    f"V={shift(block.attention.v_proj)} OUT={shift(block.attention.out_proj)} "
+                    f"FC1={shift(block.mlp_fc1)} FC2={shift(block.mlp_fc2)}\n")
+        f.write("\n`endif // FPGPT_BOARD_PARAMS_VH\n")
 
 
 def main():

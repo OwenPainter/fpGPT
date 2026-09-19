@@ -146,9 +146,11 @@ class NumericTests(unittest.TestCase):
             self.assertEqual(image[0], int(ir_engine.token_embedding.weights.data.flat[0]) & 0xFF)
             _write_board_params(ir, ir_engine, root/'board_params.vh')
             text = (root/'board_params.vh').read_text()
-            self.assertIn(f'BOARD_ROM_DEPTH    = {ir_engine.total_weight_bytes};', text)
-            self.assertIn(f'BOARD_D_MODEL      = {model.config["d_model"]};', text)
-            self.assertIn('ENGINE_Q_SHIFT', text)
+            self.assertIn(f'`define FPGPT_ROM_DEPTH       {ir_engine.total_weight_bytes}', text)
+            self.assertIn(f'`define FPGPT_D_MODEL         {model.config["d_model"]}', text)
+            self.assertIn(f'`define FPGPT_VOCAB_SIZE      {model.config["vocab_size"]}', text)
+            self.assertIn('`define FPGPT_Q_SHIFT', text)
+            self.assertIn('`ifndef FPGPT_BOARD_PARAMS_VH', text)
 
 
 @unittest.skipUnless(shutil.which('iverilog') and shutil.which('vvp'), 'requires Icarus Verilog')

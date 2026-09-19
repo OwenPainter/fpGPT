@@ -4,3 +4,4 @@ __pycache__/
 checkpoints/
 build/
 *.pt
+obj_dir/

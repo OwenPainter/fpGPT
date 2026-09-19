@@ -1,0 +1,207 @@
+{
+  "config": {
+    "d_ff": 16,
+    "d_model": 8,
+    "dropout": 0.0,
+    "max_seq_len": 4,
+    "num_heads": 2,
+    "num_layers": 1,
+    "vocab_size": 16
+  },
+  "engine_bytes": 904,
+  "engine_hex_tokens": 904,
+  "formats": {
+    "block0_fc1": 5,
+    "block0_fc2": 5,
+    "block0_gelu": 5,
+    "block0_k": 5,
+    "block0_ln1": 4,
+    "block0_ln2": 4,
+    "block0_out": 5,
+    "block0_q": 5,
+    "block0_res1": 5,
+    "block0_res2": 5,
+    "block0_v": 5,
+    "embeddings": 5,
+    "final_ln": 4,
+    "logits": 5,
+    "pos_emb": 5,
+    "tok_emb": 5
+  },
+  "manifest": {
+    "accumulator_width": 64,
+    "attention": {
+      "block_0_attn": {
+        "DATA_WIDTH": 8,
+        "D_MODEL": 8,
+        "K_SHIFT": 10,
+        "MAX_SEQ_LEN": 4,
+        "NUM_HEADS": 2,
+        "OUT_SHIFT": 11,
+        "Q_SHIFT": 10,
+        "SCORE_MULT": 524288,
+        "SCORE_SHIFT": 28,
+        "V_SHIFT": 10
+      }
+    },
+    "data_width": 8,
+    "formats": {
+      "block0_fc1": 5,
+      "block0_fc2": 5,
+      "block0_gelu": 5,
+      "block0_k": 5,
+      "block0_ln1": 4,
+      "block0_ln2": 4,
+      "block0_out": 5,
+      "block0_q": 5,
+      "block0_res1": 5,
+      "block0_res2": 5,
+      "block0_v": 5,
+      "embeddings": 5,
+      "final_ln": 4,
+      "logits": 5,
+      "pos_emb": 5,
+      "tok_emb": 5
+    },
+    "gelu": {
+      "block0": {
+        "bytes": 256,
+        "entries": 256,
+        "file": "weights/block0_gelu.hex",
+        "input_frac": 5,
+        "output_frac": 5
+      }
+    },
+    "layer_norm": {
+      "block_0_ln1": {
+        "beta_byte_addr": 192,
+        "beta_frac": 4,
+        "beta_width": 32,
+        "epsilon_int": 671,
+        "gamma_byte_addr": 160,
+        "gamma_frac": 14,
+        "gamma_width": 32,
+        "input_frac": 5,
+        "normalized_frac": 14,
+        "output_frac": 4,
+        "statistics_extra_frac": 8
+      },
+      "block_0_ln2": {
+        "beta_byte_addr": 768,
+        "beta_frac": 4,
+        "beta_width": 32,
+        "epsilon_int": 671,
+        "gamma_byte_addr": 736,
+        "gamma_frac": 14,
+        "gamma_width": 32,
+        "input_frac": 5,
+        "normalized_frac": 14,
+        "output_frac": 4,
+        "statistics_extra_frac": 8
+      },
+      "final_ln": {
+        "beta_byte_addr": 1280,
+        "beta_frac": 4,
+        "beta_width": 32,
+        "epsilon_int": 671,
+        "gamma_byte_addr": 1248,
+        "gamma_frac": 14,
+        "gamma_width": 32,
+        "input_frac": 5,
+        "normalized_frac": 14,
+        "output_frac": 4,
+        "statistics_extra_frac": 8
+      }
+    },
+    "linear": {
+      "block_0_k": {
+        "bias_byte_addr": 416,
+        "bias_frac": 15,
+        "bias_width": 64,
+        "input_frac": 4,
+        "output_frac": 5,
+        "shift": 10,
+        "weight_byte_addr": 352,
+        "weight_frac": 11
+      },
+      "block_0_mlp_fc1": {
+        "bias_byte_addr": 928,
+        "bias_frac": 15,
+        "bias_width": 64,
+        "input_frac": 4,
+        "output_frac": 5,
+        "shift": 10,
+        "weight_byte_addr": 800,
+        "weight_frac": 11
+      },
+      "block_0_mlp_fc2": {
+        "bias_byte_addr": 1184,
+        "bias_frac": 16,
+        "bias_width": 64,
+        "input_frac": 5,
+        "output_frac": 5,
+        "shift": 11,
+        "weight_byte_addr": 1056,
+        "weight_frac": 11
+      },
+      "block_0_out": {
+        "bias_byte_addr": 672,
+        "bias_frac": 16,
+        "bias_width": 64,
+        "input_frac": 5,
+        "output_frac": 5,
+        "shift": 11,
+        "weight_byte_addr": 608,
+        "weight_frac": 11
+      },
+      "block_0_q": {
+        "bias_byte_addr": 288,
+        "bias_frac": 15,
+        "bias_width": 64,
+        "input_frac": 4,
+        "output_frac": 5,
+        "shift": 10,
+        "weight_byte_addr": 224,
+        "weight_frac": 11
+      },
+      "block_0_v": {
+        "bias_byte_addr": 544,
+        "bias_frac": 15,
+        "bias_width": 64,
+        "input_frac": 4,
+        "output_frac": 5,
+        "shift": 10,
+        "weight_byte_addr": 480,
+        "weight_frac": 11
+      },
+      "lm_head": {
+        "bias_byte_addr": null,
+        "bias_frac": 15,
+        "bias_width": 64,
+        "input_frac": 4,
+        "output_frac": 5,
+        "shift": 10,
+        "weight_byte_addr": 1312,
+        "weight_frac": 11
+      }
+    },
+    "rounding": {
+      "division": "toward zero",
+      "parameter": "nearest ties-to-even",
+      "shift": "floor"
+    },
+    "scale_rule": "real = integer * 2**(-fractional_bits)",
+    "unified_rom": {
+      "byte_order": "little",
+      "depth": 1440,
+      "word_width": 8
+    },
+    "version": 1
+  },
+  "mixed_hex_tokens": 1440,
+  "mixed_width_bytes": 1440,
+  "rom_depth": 904,
+  "seed": 20240919,
+  "total_params": 904,
+  "w_addr_width": 10
+}
