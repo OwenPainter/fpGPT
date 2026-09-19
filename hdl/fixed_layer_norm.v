@@ -44,6 +44,8 @@ module fixed_layer_norm #(
         end
     endfunction
 
+    wire signed [63:0] stddev_next = isqrt(variance/DIM+EPSILON_INT);
+
     always @(posedge clk) if(rst_n && !busy && load && load_addr < DIM) begin
         x[load_addr] <= x_data; gamma[load_addr] <= gamma_data; beta[load_addr] <= beta_data;
     end
@@ -64,7 +66,7 @@ module fixed_layer_norm #(
                     variance<=variance+centered*centered;
                     if(index==DIM-1) state<=ROOT; else index<=index+1;
                 end
-                ROOT: begin stddev<=isqrt(variance/DIM+EPSILON_INT); index<=0; state<=NORMALIZE; end
+                ROOT: begin stddev<=stddev_next; index<=0; state<=NORMALIZE; end
                 NORMALIZE: begin
                     y_data<=affine > MAXIMUM ? MAXIMUM[DATA_WIDTH-1:0] :
                             affine < MINIMUM ? MINIMUM[DATA_WIDTH-1:0] : affine[DATA_WIDTH-1:0];
