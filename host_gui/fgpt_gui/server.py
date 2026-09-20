@@ -62,6 +62,10 @@ class GuiHTTPServer(ThreadingHTTPServer):
         self.classifier = classifier
 
     def config_payload(self) -> dict:
+        params_dict = self.params.to_dict()
+        if self.config.transport == "slm":
+            params_dict["char_min"] = 32
+            params_dict["char_max"] = 126
         return {
             "app": "fpGPT host GUI",
             "version": __version__,
@@ -71,10 +75,10 @@ class GuiHTTPServer(ThreadingHTTPServer):
             "gen_tokens": self.session.gen_tokens,
             "timeout_s": self.config.timeout_s,
             "mock_style": self.config.mock_style,
-            "slm_engine": getattr(self.config, "slm_engine", "microgpt"),
+            "slm_engine": getattr(self.config, "slm_engine", "smollm"),
             "board_params_source": self.params.source,
             "warnings": self.warnings,
-            "params": self.params.to_dict(),
+            "params": params_dict,
             "food": self.classifier.status() if self.classifier else {"available": False},
         }
 

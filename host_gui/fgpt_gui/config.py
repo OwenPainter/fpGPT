@@ -13,7 +13,7 @@ from dataclasses import dataclass
 VALID_TRANSPORTS = ("mock", "serial", "slm")
 VALID_MODES = ("legacy", "framed")
 VALID_MOCK_STYLES = ("echo", "ngram")
-VALID_SLM_ENGINES = ("microgpt", "smollm")
+VALID_SLM_ENGINES = ("smollm", "microgpt", "assistant", "echo")
 
 
 @dataclass
@@ -30,7 +30,7 @@ class GuiConfig:
 
     # Generation options.
     gen_tokens: int | None = None
-    timeout_s: float = 5.0
+    timeout_s: float = 15.0
 
     # Where to find the compiler-generated parameter contract.
     board_params: str | None = None
@@ -44,9 +44,9 @@ class GuiConfig:
     corpus: str | None = None
 
     # SLM transport options.
-    slm_engine: str = "microgpt"
-    slm_temp: float = 0.8
-    slm_top_k: int = 4
+    slm_engine: str = "smollm"
+    slm_temp: float = 0.7
+    slm_top_k: int = 40
 
     # Local HTTP server.
     http_host: str = "127.0.0.1"
@@ -70,8 +70,8 @@ class GuiConfig:
             )
         if self.transport == "serial" and not self.port:
             raise ValueError("transport=serial requires --port")
-        if self.gen_tokens is not None and not (1 <= self.gen_tokens <= 255):
-            raise ValueError("gen_tokens must be in 1..255")
+        if self.gen_tokens is not None and not (1 <= self.gen_tokens <= 1024):
+            raise ValueError("gen_tokens must be in 1..1024")
         if self.timeout_s <= 0:
             raise ValueError("timeout_s must be positive")
         if not (0 <= self.http_port <= 65535):

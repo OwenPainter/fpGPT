@@ -46,7 +46,10 @@ class ChatSession:
         self.transport = transport
         self.params = params
         self.mode = mode
-        self.gen_tokens = int(gen_tokens or params.gen_tokens)
+        if getattr(transport, "name", "") == "slm":
+            self.gen_tokens = int(gen_tokens or getattr(transport, "gen_tokens", 256))
+        else:
+            self.gen_tokens = int(gen_tokens or params.gen_tokens)
         self.reply_timeout = float(reply_timeout)
 
         self._state = SessionState.IDLE
@@ -90,11 +93,12 @@ class ChatSession:
     def __exit__(self, *exc) -> None:
         self.stop()
 
-    # ── subscribers ──
+    # ── subscriber hub (SSE fanout) ──
     def subscribe(self) -> queue.Queue:
-        q: queue.Queue = queue.Queue(maxsize=4096)
+        q: queue.Queue = queue.Queue(maxsize=128)
         with self._lock:
             self._subscribers.append(q)
+        q.put_nowait(self.status_event())
         return q
 
     def unsubscribe(self, q: queue.Queue) -> None:
@@ -134,14 +138,22 @@ class ChatSession:
         """Drop characters the hardware tokenizer cannot represent."""
         clean = []
         removed = []
+        is_slm = getattr(self.transport, "name", "") == "slm"
         for ch in text:
             code = ord(ch)
             if ch in "\r\n":
                 continue
-            if self.params.char_min <= code <= self.params.char_max:
-                clean.append(ch)
+            if is_slm:
+                # Full printable ASCII + standard text characters supported by SLM
+                if 32 <= code <= 126 or code > 127:
+                    clean.append(ch)
+                else:
+                    removed.append(ch)
             else:
-                removed.append(ch)
+                if self.params.char_min <= code <= self.params.char_max:
+                    clean.append(ch)
+                else:
+                    removed.append(ch)
         return "".join(clean), removed
 
     def submit(self, text: str) -> tuple[bool, str | None]:
@@ -167,11 +179,11 @@ class ChatSession:
             self._state = SessionState.COLLECTING
 
         if self.mode == "legacy":
-            payload = clean.encode("latin-1", errors="replace") + b"\n"
+            payload = clean.encode("utf-8", errors="replace") + b"\n"
         else:
-            payload = encode_frame(Command.PROMPT, clean.encode("latin-1", "replace"))
+            payload = encode_frame(Command.PROMPT, clean.encode("utf-8", "replace"))
             payload += encode_frame(
-                Command.GENERATE, bytes([self.gen_tokens & 0xFF, 0])
+                Command.GENERATE, bytes([self.gen_tokens & 0xFF, (self.gen_tokens >> 8) & 0xFF])
             )
 
         self._emit({"type": "status", "state": "collecting", "mode": self.mode,
@@ -223,6 +235,10 @@ class ChatSession:
             if not self.busy:
                 return  # unsolicited bytes are ignored on the legacy link
             for byte in data:
+                # 0x04 is EOT (End of Transmission) marker emitted by SLM when generation finishes
+                if getattr(self.transport, "name", "") == "slm" and byte == 0x04:
+                    self._finish("complete")
+                    return
                 self._append_reply(byte)
                 if len(self._reply) >= self.gen_tokens:
                     self._finish("complete")
@@ -250,14 +266,14 @@ class ChatSession:
 
     def _append_reply(self, byte: int) -> None:
         self._reply.append(byte & 0xFF)
-        char = chr(byte) if 32 <= byte < 127 else "."
+        char = chr(byte) if (32 <= byte < 127 or byte in (10, 13, 9)) else "."
         self._emit({"type": "token", "char": char, "raw": byte & 0xFF})
 
     def _finish(self, reason: str) -> None:
         with self._lock:
             if self._state != SessionState.COLLECTING:
                 return
-            text = self._reply.decode("latin-1", errors="replace")
+            text = self._reply.decode("utf-8", errors="replace")
             self._state = SessionState.IDLE
         self._emit({"type": "reply_end", "reason": reason, "text": text,
                     "tokens": len(self._reply)})
