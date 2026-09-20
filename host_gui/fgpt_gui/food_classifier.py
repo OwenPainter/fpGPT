@@ -22,7 +22,11 @@ from pathlib import Path
 # Repository root is two levels up from ``host_gui/fgpt_gui/``.
 DEFAULT_MODEL = Path(__file__).resolve().parents[2] / "Models" / "hotdog_model.tflite"
 
-HOTDOG_THRESHOLD = 0.5
+# The classifier only labels an image as "Not a hot dog." if it is > 65% confident
+# in that negative classification (i.e. P(not hot dog) = 1.0 - score > 0.65).
+# Equivalently, the score threshold for "Hot dog!" is 0.35 (1.0 - 0.65).
+NOT_HOTDOG_MIN_CONFIDENCE = 0.65
+HOTDOG_THRESHOLD = 0.35
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
 HOTDOG_LABEL = "Hot dog!"
@@ -61,6 +65,7 @@ class FoodClassifier:
             "model_exists": model_exists,
             "runtime_installed": runtime_installed,
             "threshold": HOTDOG_THRESHOLD,
+            "not_hotdog_min_confidence": NOT_HOTDOG_MIN_CONFIDENCE,
         }
         if self._size is not None:
             info["input_size"] = list(self._size)
@@ -132,14 +137,20 @@ class FoodClassifier:
                 self._output["index"]), -1)[0])
 
         elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
-        is_hotdog = score >= HOTDOG_THRESHOLD
+        not_hotdog_confidence = 1.0 - score
+        # Only classify as "Not a hot dog." if confidence exceeds 65% (P(not hot dog) > 0.65)
+        is_not_hotdog = not_hotdog_confidence > NOT_HOTDOG_MIN_CONFIDENCE
+        is_hotdog = not is_not_hotdog
+        confidence = not_hotdog_confidence if is_not_hotdog else score
+
         return {
             "ok": True,
             "label": HOTDOG_LABEL if is_hotdog else NOT_HOTDOG_LABEL,
             "is_hotdog": is_hotdog,
             "probability": score,
-            "confidence": score if is_hotdog else 1.0 - score,
+            "confidence": confidence,
             "threshold": HOTDOG_THRESHOLD,
+            "not_hotdog_min_confidence": NOT_HOTDOG_MIN_CONFIDENCE,
             "input_size": list(self._size),
             "model": self.model_path.name,
             "inference_ms": elapsed_ms,
