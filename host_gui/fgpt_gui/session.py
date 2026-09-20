@@ -93,6 +93,48 @@ class ChatSession:
     def __exit__(self, *exc) -> None:
         self.stop()
 
+    def swap_transport(self, new_transport) -> None:
+        """Hot-swap the underlying transport (e.g. SLM ↔ Serial).
+
+        Stops the reader thread, closes the old transport, opens the new one,
+        and restarts the reader loop. Safe to call while the session is running.
+        """
+        # Stop the current reader loop
+        self._running.clear()
+        thread = self._reader_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._reader_thread = None
+
+        # Close old transport
+        try:
+            self.transport.close()
+        except Exception:
+            pass
+
+        # Install and open new transport
+        self.transport = new_transport
+
+        # Update gen_tokens based on transport type
+        if getattr(new_transport, "name", "") == "slm":
+            self.gen_tokens = int(getattr(new_transport, "gen_tokens", 256))
+        else:
+            self.gen_tokens = int(self.params.gen_tokens)
+
+        new_transport.open()
+
+        # Restart the reader loop
+        self._running.set()
+        with self._lock:
+            self._reply.clear()
+            self._state = SessionState.IDLE
+            self._error = None
+        self._reader_thread = threading.Thread(
+            target=self._reader_loop, name="fgpt-reader", daemon=True
+        )
+        self._reader_thread.start()
+        self._emit(self.status_event())
+
     # ── subscriber hub (SSE fanout) ──
     def subscribe(self) -> queue.Queue:
         q: queue.Queue = queue.Queue(maxsize=128)

@@ -120,12 +120,19 @@ function handleEvent(event) {
 function applyConfig(config) {
   if (config.slm_engine) {
     const sel = el("model-selector");
-    if (sel && sel.value !== config.slm_engine && config.slm_engine !== "fpga") {
+    if (sel && sel.value !== config.slm_engine) {
       sel.value = config.slm_engine;
+    }
+    // Show/hide port controls based on engine
+    const portControls = el("fpga-port-controls");
+    if (portControls) {
+      portControls.style.display = config.slm_engine === "fpga" ? "inline" : "none";
     }
   }
 
-  if (config.transport === "slm") {
+  if (config.slm_engine === "fpga" || config.transport === "serial") {
+    badge("badge-transport", "FPGA: Serial (" + (config.port || "unknown") + ")");
+  } else if (config.transport === "slm") {
     badge("badge-transport", "SLM: " + (config.slm_engine || "MicroGPT") + " (Local CPU)");
   } else {
     badge("badge-transport", "transport: " + config.transport
@@ -379,15 +386,77 @@ function subscribe() {
 
 function setupModelSelector() {
   const selector = el("model-selector");
+  const portControls = el("fpga-port-controls");
+  const portSelector = el("fpga-port-selector");
+  const connectBtn = el("fpga-connect");
+  const refreshBtn = el("fpga-refresh");
   if (!selector) return;
+
+  async function refreshPorts() {
+    try {
+      const resp = await fetch("/api/ports");
+      const data = await resp.json();
+      // Clear old options (keep the placeholder)
+      while (portSelector.options.length > 1) portSelector.remove(1);
+      (data.ports || []).forEach((p) => {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p;
+        portSelector.appendChild(opt);
+      });
+      if (data.ports && data.ports.length === 0) {
+        addMessage("system", "No COM ports detected. Is the ESP32-S2 connected?", "system");
+      }
+    } catch (err) {
+      addMessage("system", "Could not fetch serial ports: " + err, "system error");
+    }
+  }
+
+  function showPortControls(show) {
+    portControls.style.display = show ? "inline" : "none";
+  }
+
+  portSelector.addEventListener("change", () => {
+    connectBtn.disabled = !portSelector.value;
+  });
+
+  refreshBtn.addEventListener("click", refreshPorts);
+
+  connectBtn.addEventListener("click", async () => {
+    const port = portSelector.value;
+    if (!port) return;
+    connectBtn.disabled = true;
+    addMessage("system", "Connecting to FPGA on " + port + "...", "system");
+    try {
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ engine: "fpga", port }),
+      });
+      const data = await response.json();
+      if (!data.ok) {
+        addMessage("system", "FPGA connect failed: " + (data.error || "unknown"), "system error");
+        connectBtn.disabled = false;
+      } else {
+        addMessage("system", "Connected to FPGA on " + port + " at 115200 baud.", "system");
+      }
+    } catch (err) {
+      addMessage("system", "FPGA connect error: " + err, "system error");
+      connectBtn.disabled = false;
+    }
+  });
+
   selector.addEventListener("change", async () => {
     const engine = selector.value;
+
     if (engine === "fpga") {
-      alert("FPGA Hardware transport is currently a work in progress! Switching back to previous model for now.");
-      selector.value = state.config?.slm_engine || "smollm";
-      return;
+      showPortControls(true);
+      refreshPorts();
+      return; // don't send settings yet — user must pick a port and click Connect
     }
-    
+
+    showPortControls(false);
+
     addMessage("system", "Switching engine to " + engine + "...", "system");
     try {
       const response = await fetch("/api/settings", {
@@ -397,7 +466,7 @@ function setupModelSelector() {
       });
       const data = await response.json();
       if (!data.ok) {
-        addMessage("system", "Failed to switch engine", "system error");
+        addMessage("system", "Failed to switch engine: " + (data.error || "unknown"), "system error");
       }
     } catch (err) {
       addMessage("system", "Failed to switch engine: " + err, "system error");

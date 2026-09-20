@@ -13,7 +13,7 @@ from dataclasses import dataclass
 VALID_TRANSPORTS = ("mock", "serial", "slm")
 VALID_MODES = ("legacy", "framed")
 VALID_MOCK_STYLES = ("echo", "ngram")
-VALID_SLM_ENGINES = ("smollm", "microgpt", "assistant", "echo")
+VALID_SLM_ENGINES = ("smollm", "tinystories", "microgpt", "assistant", "echo", "fpga")
 
 
 @dataclass

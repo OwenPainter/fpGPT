@@ -19,8 +19,15 @@
       <select id="model-selector" class="badge badge-select" title="Select Model Engine" style="background-color: var(--bg2); color: var(--fg); border: 1px solid var(--border); padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.85rem; outline: none; cursor: pointer;">
         <option value="smollm">ChatGPT Model</option>
         <option value="tinystories">TinyStories LLM</option>
-        <option value="fpga">FPGA Hardware (In Progress)</option>
+        <option value="fpga">FPGA Hardware</option>
       </select>
+      <span id="fpga-port-controls" style="display: none;">
+        <select id="fpga-port-selector" class="badge badge-select" title="Select COM port" style="background-color: var(--bg2); color: var(--fg); border: 1px solid var(--border); padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.85rem; outline: none; cursor: pointer;">
+          <option value="">Select COM port&hellip;</option>
+        </select>
+        <button id="fpga-connect" class="badge" style="cursor:pointer; padding: 0.2rem 0.6rem; font-size: 0.85rem; background: var(--accent); color: #fff; border: none; border-radius: 4px;" disabled>Connect</button>
+        <button id="fpga-refresh" class="badge" style="cursor:pointer; padding: 0.2rem 0.5rem; font-size: 0.85rem; background: transparent; color: var(--fg-muted); border: 1px solid var(--border); border-radius: 4px;" title="Refresh port list">&#x21bb;</button>
+      </span>
       <span class="badge" id="badge-transport">transport: &mdash;</span>
       <span class="badge" id="badge-mode">mode: &mdash;</span>
       <span class="badge" id="badge-model">model: &mdash;</span>

@@ -76,6 +76,7 @@ class GuiHTTPServer(ThreadingHTTPServer):
             "timeout_s": self.config.timeout_s,
             "mock_style": self.config.mock_style,
             "slm_engine": getattr(self.config, "slm_engine", "smollm"),
+            "port": getattr(self.config, "port", None),
             "board_params_source": self.params.source,
             "warnings": self.warnings,
             "params": params_dict,
@@ -101,6 +102,10 @@ class GuiRequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.server.config_payload())
         elif path == "/api/events":
             self._serve_events()
+        elif path == "/api/ports":
+            from .transports.serial_transport import SerialTransport
+            ports = SerialTransport.list_ports()
+            self._send_json({"ok": True, "ports": ports})
         elif path == "/favicon.ico":
             self.send_error(404)
         else:
@@ -131,14 +136,52 @@ class GuiRequestHandler(BaseHTTPRequestHandler):
             threading.Thread(target=self.server.shutdown, daemon=True).start()
         elif path == "/api/settings":
             engine = str(body.get("engine", ""))
+            port = str(body.get("port", ""))
             if engine:
-                if getattr(self.server.session.transport, "name", "") == "slm":
-                    self.server.session.transport.engine = engine
-                    import threading
-                    threading.Thread(target=self.server.session.transport._ensure_model_loaded, daemon=True).start()
-                self.server.config.slm_engine = engine
+                session = self.server.session
+                current_is_serial = getattr(session.transport, "name", "") == "serial"
+
+                if engine == "fpga":
+                    # Switch to serial (FPGA) transport
+                    if not port:
+                        self._send_json({"ok": False, "error": "No COM port specified"}, status=400)
+                        return
+                    try:
+                        from .transports.serial_transport import SerialTransport
+                        baud = self.server.params.baud_rate
+                        new_transport = SerialTransport(port=port, baud=baud)
+                        session.swap_transport(new_transport)
+                        self.server.config.slm_engine = "fpga"
+                        self.server.config.transport = "serial"
+                        self.server.config.port = port
+                    except Exception as exc:
+                        self._send_json({"ok": False, "error": f"FPGA connect failed: {exc}"}, status=500)
+                        return
+                else:
+                    # Switch to SLM transport (smollm, tinystories, etc.)
+                    if current_is_serial:
+                        # Need to swap back to SLM transport
+                        from .transports.slm_transport import SlmTransport
+                        new_transport = SlmTransport(
+                            engine=engine,
+                            gen_tokens=self.server.config.gen_tokens or 160,
+                            max_seq_len=1024,
+                            vocab_size=self.server.params.vocab_size,
+                            temperature=getattr(self.server.config, "slm_temp", 0.7),
+                            top_k=getattr(self.server.config, "slm_top_k", 40),
+                        )
+                        session.swap_transport(new_transport)
+                        self.server.config.transport = "slm"
+                        self.server.config.port = None
+                    else:
+                        # Already on SLM, just change the engine
+                        session.transport.engine = engine
+                        import threading
+                        threading.Thread(target=session.transport._ensure_model_loaded, daemon=True).start()
+                    self.server.config.slm_engine = engine
+
                 # Broadcast updated config via SSE
-                self.server.session._emit({"type": "hello", "config": self.server.config_payload(), "state": self.server.session.status_event()})
+                session._emit({"type": "hello", "config": self.server.config_payload(), "state": session.status_event()})
             self._send_json({"ok": True})
         else:
             self.send_error(404, "not found")
