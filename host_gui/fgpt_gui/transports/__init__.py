@@ -21,6 +21,18 @@ def build_transport(config, params):
             baud=config.baud or params.baud_rate,
         )
 
+    if config.transport == "slm":
+        from .slm_transport import SlmTransport
+
+        return SlmTransport(
+            engine=getattr(config, "slm_engine", "microgpt"),
+            gen_tokens=config.gen_tokens or params.gen_tokens,
+            max_seq_len=params.max_seq_len,
+            vocab_size=params.vocab_size,
+            temperature=getattr(config, "slm_temp", 0.8),
+            top_k=getattr(config, "slm_top_k", 4),
+        )
+
     from .mock_transport import MockTransport
 
     return MockTransport(

@@ -25,8 +25,8 @@ DEFAULT_MODEL = Path(__file__).resolve().parents[2] / "Models" / "hotdog_model.t
 HOTDOG_THRESHOLD = 0.5
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
-HOTDOG_LABEL = "Hot dog"
-NOT_HOTDOG_LABEL = "Not a hot dog"
+HOTDOG_LABEL = "Hot dog!"
+NOT_HOTDOG_LABEL = "Not a hot dog."
 
 
 class ClassifierUnavailable(RuntimeError):
@@ -112,6 +112,8 @@ class FoodClassifier:
                 "(pip install ai-edge-litert Pillow)"
             ) from exc
 
+        import time
+        t0 = time.perf_counter()
         with self._lock:
             self._load()
             try:
@@ -129,6 +131,7 @@ class FoodClassifier:
             score = float(np.reshape(self._interpreter.get_tensor(
                 self._output["index"]), -1)[0])
 
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
         is_hotdog = score >= HOTDOG_THRESHOLD
         return {
             "ok": True,
@@ -139,4 +142,5 @@ class FoodClassifier:
             "threshold": HOTDOG_THRESHOLD,
             "input_size": list(self._size),
             "model": self.model_path.name,
+            "inference_ms": elapsed_ms,
         }

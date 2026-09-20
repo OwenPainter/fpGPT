@@ -60,6 +60,23 @@ body {
 }
 .dot.online { background: var(--ok); box-shadow: 0 0 8px rgba(63,185,80,0.6); }
 
+.btn-shutdown {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  background: rgba(179, 73, 63, 0.15);
+  border: 1px solid rgba(179, 73, 63, 0.4);
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  color: #ff7b72;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-shutdown:hover {
+  background: rgba(179, 73, 63, 0.35);
+  border-color: #ff7b72;
+  color: #fff;
+}
+
 .banner {
   font-size: 0.78rem;
   color: var(--warn);
