@@ -28,6 +28,7 @@
     "hdl/layer_norm.v::WIDTHEXPAND": 9,
     "hdl/layer_norm.v::WIDTHTRUNC": 6,
     "hdl/rom_sync.v::DECLFILENAME": 1,
+    "hdl/rom_sync.v::UNUSEDPARAM": 1,
     "hdl/rom_sync.v::WIDTHEXPAND": 2,
     "hdl/rom_sync.v::WIDTHTRUNC": 1,
     "hdl/transformer_engine.v::PINCONNECTEMPTY": 1,
