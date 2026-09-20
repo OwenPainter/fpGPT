@@ -152,6 +152,11 @@ class ChatSession:
         clean, removed = self.sanitize(text)
         if not clean:
             return False, "prompt is empty after removing unsupported characters"
+        if self.mode == "legacy":
+            # The RTL reserves context for the complete fixed-length reply.
+            limit = self.params.max_seq_len - self.params.gen_tokens
+            if len(clean) > limit:
+                return False, f"prompt exceeds {limit} characters; remaining context is reserved for the reply"
 
         with self._lock:
             self._reply.clear()

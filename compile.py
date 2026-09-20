@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from model.micro_gpt import MicroGPT
 from compiler.quantizer import quantize_model
-from compiler.mif_writer import export_all_weights
+from compiler.mif_writer import export_all_weights, export_engine_image
 from compiler.fixed_export import export_fixed
 
 
@@ -38,6 +38,9 @@ def compile_model(args):
     print("[1/4] Loading trained model...")
     checkpoint = torch.load(args.model, map_location="cpu", weights_only=False)
     config = checkpoint["config"]
+    gen_tokens = getattr(args, "gen_tokens", 16)
+    if not 1 <= gen_tokens < config["max_seq_len"]:
+        raise ValueError("--gen-tokens must be in 1..checkpoint max_seq_len-1")
     model = MicroGPT(config)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
@@ -82,8 +85,8 @@ def compile_model(args):
 
     # Uniform-width image consumed by the ROM-based engine (rom_sync/weight_rom).
     engine_dir = os.path.join(weights_dir, "engine")
-    export_all_weights(ir_engine, engine_dir, fmt="hex", unified_only=True)
-    print(f"       [ok] {os.path.join(engine_dir, 'weights_unified.hex')} "
+    engine_hex = export_engine_image(ir_engine, engine_dir)
+    print(f"       [ok] {engine_hex} "
           f"({ir_engine.total_weight_bytes:,} bytes, {args.precision}-bit uniform)")
 
     # ── Step 4: Generate Verilog RTL ──
@@ -103,8 +106,10 @@ def compile_model(args):
 
     # Generate board parameters (ROM geometry, dimensions, per-layer shifts)
     board_path = os.path.join(rtl_dir, "board_params.vh")
-    _write_board_params(ir, ir_engine, board_path)
+    _write_board_params(ir, ir_engine, board_path, gen_tokens=gen_tokens)
     print(f"       [ok] {board_path}")
+    print(f"       UART: {config['max_seq_len'] - gen_tokens} prompt characters, "
+          f"{gen_tokens} generated characters, {config['max_seq_len']} context slots")
 
     numeric = export_fixed(ir, args.out)
     print('       [ok] fixed_point.json, fixed_params.vh, configured numeric wrappers and GELU tables')
@@ -227,6 +232,8 @@ def _write_board_params(ir, ir_engine, filepath: str,
     consumes, so ROM geometry comes from ``ir_engine``.
     """
     depth = ir_engine.total_weight_bytes
+    if not 1 <= gen_tokens < ir.max_seq_len:
+        raise ValueError("gen_tokens must be in 1..max_seq_len-1")
     addr_width = max(1, (depth - 1).bit_length())
 
     def shift(layer):
@@ -298,6 +305,8 @@ def main():
                         help="Weight file format to export")
     parser.add_argument('--formats', help='JSON mapping activation stage names to fractional bits (0..15)')
     parser.add_argument('--calibration', help='JSON list of representative token-ID sequences for activation ranges')
+    parser.add_argument('--gen-tokens', type=int, default=16,
+                        help='Output characters per prompt; reserves this many context slots (default: 16)')
     args = parser.parse_args()
     compile_model(args)
 

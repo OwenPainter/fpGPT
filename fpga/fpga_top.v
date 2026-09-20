@@ -107,6 +107,8 @@ module fpga_top #(
     wire [7:0]  tx_data;
     wire        tx_valid;
     wire        gen_busy;
+    wire        tx_ready;
+    wire        prompt_overflow;
     wire [31:0] gen_cycles;   // test hook: cycles of the last generation burst
 
     generation_controller #(
@@ -140,12 +142,14 @@ module fpga_top #(
         .token_valid(rx_valid),
         .token_out(tx_data),
         .token_out_valid(tx_valid),
+        .token_out_ready(tx_ready),
         .busy(gen_busy),
+        .prompt_overflow(prompt_overflow),
         .gen_cycles(gen_cycles)
     );
 
     // ── UART TX ──
-    wire tx_ready;
+    // The controller holds valid/data until the UART accepts the byte.
 
     uart_tx #(
         .CLK_FREQ(CLK_FREQ),
@@ -161,7 +165,8 @@ module fpga_top #(
 
     // ── Debug LEDs ──
     // LEDR[0] = reset, LEDR[1] = PLL locked, LEDR[2] = generated token,
-    // LEDR[3] = engine busy, LEDR[9:4] = last received byte[5:0].
+    // LEDR[3] = engine busy, LEDR[4] = prompt truncated,
+    // LEDR[9:5] = last received byte[4:0].
     reg [7:0] last_rx;
     always @(posedge clk_sys) begin
         if (rx_valid) last_rx <= rx_data;
@@ -169,9 +174,10 @@ module fpga_top #(
 
     assign LEDR[0]   = ~rst_n;
     assign LEDR[1]   = pll_locked;
-    assign LEDR[2]   = tx_valid;
+    assign LEDR[2]   = tx_valid && tx_ready;
     assign LEDR[3]   = gen_busy;
-    assign LEDR[9:4] = last_rx[5:0];
+    assign LEDR[4]   = prompt_overflow;
+    assign LEDR[9:5] = last_rx[4:0];
 
     // gen_cycles is a simulation/bench hook; unused on the board.
     wire _unused = &{1'b0, gen_cycles};

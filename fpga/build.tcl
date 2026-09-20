@@ -7,52 +7,70 @@
 # directory, then runs analysis/synthesis, fitter, assembler and timing
 # analysis. The bitstream lands in output_files/fpGPT.sof.
 
-package require ::quartus::project
-package require ::quartus::flow
-
 set script_dir [file dirname [file normalize [info script]]]
 cd $script_dir
 
 # ── 1. Bring in compiler-generated artifacts ──
 proc sync_generated {} {
     set params [file normalize "../build/rtl/board_params.vh"]
-    if {[file exists $params]} {
-        file copy -force $params "board_params.vh"
-        puts "\[build\] board_params.vh <- $params"
-    } else {
-        puts "\[build\] WARNING: $params not found; using checked-in board_params.vh"
-    }
-
     set rom [file normalize "../build/weights/engine/weights_unified.hex"]
-    if {[file exists $rom]} {
-        file copy -force $rom "weights_unified.hex"
-        puts "\[build\] weights_unified.hex <- $rom"
-    } else {
-        puts "\[build\] WARNING: $rom not found; using an all-zero ROM image"
-        write_zero_rom
+    foreach path [list $params $rom] {
+        if {![file exists $path]} {
+            error "Missing $path; run compile.py with a trained checkpoint first"
+        }
     }
-}
-
-# Emit an all-zero ROM image sized to FPGPT_ROM_DEPTH so the MIF_FILE
-# assignment and $readmemh always resolve. The model then emits '.' only.
-proc write_zero_rom {} {
-    set depth 0
-    if {[file exists "board_params.vh"]} {
-        set fh [open "board_params.vh" r]
-        set text [read $fh]
-        close $fh
-        regexp {FPGPT_ROM_DEPTH\s*=\s*(\d+)} $text -> depth
-    }
-    if {$depth <= 0} {
-        puts "\[build\] WARNING: could not read FPGPT_ROM_DEPTH; writing empty ROM"
-        set depth 1
-    }
-    set fh [open "weights_unified.hex" w]
-    for {set i 0} {$i < $depth} {incr i} { puts $fh "00" }
+    set fh [open $params r]
+    set header [read $fh]
     close $fh
-    puts "\[build\] weights_unified.hex <- all-zero image ($depth bytes)"
+    foreach name {ROM_DEPTH DATA_WIDTH MAX_SEQ_LEN GEN_TOKENS} {
+        if {![regexp "FPGPT_${name}\\s+(\\d+)" $header -> value($name)]} {
+            error "Missing FPGPT_$name in $params"
+        }
+    }
+    if {$value(GEN_TOKENS) < 1 || $value(GEN_TOKENS) >= $value(MAX_SEQ_LEN)} {
+        error "GEN_TOKENS must leave at least one prompt slot"
+    }
+    set fh [open $rom r]
+    set words [regexp -all -inline {\S+} [read $fh]]
+    close $fh
+    if {[llength $words] != $value(ROM_DEPTH)} {
+        error "ROM contains [llength $words] words; expected $value(ROM_DEPTH)"
+    }
+    set digits [expr {($value(DATA_WIDTH) + 3) / 4}]
+    foreach word $words {
+        if {![regexp {^[0-9a-fA-F]+$} $word] || [string length $word] != $digits} {
+            error "Invalid ROM word '$word'; expected $digits hexadecimal digits"
+        }
+    }
+    file copy -force $params "board_params.vh"
+    file copy -force $rom "weights_unified.hex"
+    # Bind a MIF directly to the inferred ROM. Expanding a 212K-word
+    # $readmemh initial block in Quartus 25.1 is prohibitively slow.
+    # Derive it from the validated simulation image so both paths agree.
+    set fh [open "weights_unified.hex.mif" w]
+    puts $fh "WIDTH=$value(DATA_WIDTH);"
+    puts $fh "DEPTH=$value(ROM_DEPTH);"
+    puts $fh "ADDRESS_RADIX=HEX;"
+    puts $fh "DATA_RADIX=HEX;"
+    puts $fh "CONTENT BEGIN"
+    set address 0
+    foreach word $words {
+        puts $fh [format "%X : %s;" $address $word]
+        incr address
+    }
+    puts $fh "END;"
+    close $fh
+    puts "\[build\] Synced validated parameters and [llength $words] ROM words"
 }
 sync_generated
+
+# Validate/sync artifacts without requiring Quartus (also used by tests).
+if {[info exists ::env(FPGPT_PREPARE_ONLY)] && $::env(FPGPT_PREPARE_ONLY) eq "1"} {
+    exit 0
+}
+
+package require ::quartus::project
+package require ::quartus::flow
 
 # ── 2. Compile ──
 if {[catch {project_open fpGPT} err]} {

@@ -268,7 +268,7 @@ module attention #(
             case (state)
                 IDLE: if (start) begin
                     error <= 0;
-                    if (seq_len == 0 || seq_len > MAX_SEQ_LEN || cache_len > seq_len) begin
+                    if (seq_len == 0 || seq_len > MAX_SEQ_LEN || cache_len >= seq_len) begin
                         error <= 1; done <= 1;
                     end else begin
                         length <= seq_len; busy <= 1; projection <= 0;

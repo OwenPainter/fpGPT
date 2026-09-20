@@ -44,7 +44,8 @@ class NumericTests(unittest.TestCase):
             torch.save({'config':model.config,'model_state_dict':model.state_dict()},root/'model.pt')
             (root/'calibration.json').write_text(json.dumps([[3,4,5],[6,7,8]]))
             result = subprocess.run([sys.executable,str(ROOT/'compile.py'),'--model',str(root/'model.pt'),
-                                     '--out',str(root/'build'),'--calibration',str(root/'calibration.json')],
+                                     '--out',str(root/'build'),'--calibration',str(root/'calibration.json'),
+                                     '--gen-tokens','1'],
                                     capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             result = subprocess.run([sys.executable,'-m','model.validate_fixed','--model',str(root/'model.pt'),
@@ -144,13 +145,16 @@ class NumericTests(unittest.TestCase):
                           (root/'weights/engine/weights_unified.hex').read_text().split())
             self.assertEqual(len(image), ir_engine.total_weight_bytes)
             self.assertEqual(image[0], int(ir_engine.token_embedding.weights.data.flat[0]) & 0xFF)
-            _write_board_params(ir, ir_engine, root/'board_params.vh')
+            _write_board_params(ir, ir_engine, root/'board_params.vh', gen_tokens=1)
             text = (root/'board_params.vh').read_text()
             self.assertIn(f'`define FPGPT_ROM_DEPTH       {ir_engine.total_weight_bytes}', text)
             self.assertIn(f'`define FPGPT_D_MODEL         {model.config["d_model"]}', text)
             self.assertIn(f'`define FPGPT_VOCAB_SIZE      {model.config["vocab_size"]}', text)
             self.assertIn('`define FPGPT_Q_SHIFT', text)
             self.assertIn('`ifndef FPGPT_BOARD_PARAMS_VH', text)
+            for count in (0, model.config['max_seq_len'], model.config['max_seq_len']+1):
+                with self.assertRaises(ValueError):
+                    _write_board_params(ir, ir_engine, root/'bad.vh', gen_tokens=count)
 
 
 @unittest.skipUnless(shutil.which('iverilog') and shutil.which('vvp'), 'requires Icarus Verilog')

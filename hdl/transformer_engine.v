@@ -106,11 +106,12 @@ module transformer_engine #(
     localparam B_FC2W = B_FC1B + D_FF;
     localparam B_FC2B = B_FC2W + D_FF*D_MODEL;
 
-    // Resident MLP weight caches (one region per layer)
+    // One layer's MLP weights at a time. Keeping all layers here duplicates
+    // the source ROM and exceeds the DE1-SoC's M10K capacity with real weights.
     localparam FC1_WORDS = D_MODEL*D_FF;
     localparam FC2_WORDS = D_FF*D_MODEL;
-    localparam FC1_ROWS  = NUM_LAYERS*D_FF;
-    localparam FC2_ROWS  = NUM_LAYERS*D_MODEL;
+    localparam FC1_ROWS  = D_FF;
+    localparam FC2_ROWS  = D_MODEL;
 
     localparam D_AW   = (D_MODEL   <= 1) ? 1 : $clog2(D_MODEL);
     localparam FF_AW  = (D_FF      <= 1) ? 1 : $clog2(D_FF);
@@ -145,7 +146,6 @@ module transformer_engine #(
     reg [2:0] rom_owner;
 
     // MLP cache preload state
-    reg                    caches_valid;
     reg                    filling;
     reg [7:0]              fill_layer;
     reg [1:0]              fill_phase;
@@ -394,15 +394,15 @@ module transformer_engine #(
         .y_wr_en(lm_y_wr_en), .y_addr(lm_y_addr), .y_data(lm_y_data)
     );
 
-    // ── Resident MLP weight caches (filled once, then read NUM_PES-wide) ──
+    // ── MLP weight caches (refilled per layer, read NUM_PES-wide) ──
     // Stage-relative packed read address; weights are row-interleaved and
     // biases byte-interleaved, so each gather selects its own translation.
     wire [W_ADDR_WIDTH-1:0] fc1_raddr = fc1_w_gather
-        ? (fc1_w_addr - fc1_w_base + l_cnt*(D_MODEL*D_FF))
-        : (fc1_w_addr - fc1_b_base + l_cnt*D_FF);
+        ? (fc1_w_addr - fc1_w_base)
+        : (fc1_w_addr - fc1_b_base);
     wire [W_ADDR_WIDTH-1:0] fc2_raddr = fc2_w_gather
-        ? (fc2_w_addr - fc2_w_base + l_cnt*(D_FF*D_MODEL))
-        : (fc2_w_addr - fc2_b_base + l_cnt*D_MODEL);
+        ? (fc2_w_addr - fc2_w_base)
+        : (fc2_w_addr - fc2_b_base);
 
     // Fill ports (driven by the S_FILL preload phase)
     wire                          fc1_we_w, fc1_we_b, fc2_we_w, fc2_we_b;
@@ -440,22 +440,22 @@ module transformer_engine #(
         case (fill_phase)
             2'd0: begin
                 fill_rom_addr = fill_blk_base + B_FC1W + fill_idx;
-                fill_caddr   = fill_layer*(D_MODEL*D_FF) + fill_idx;
+                fill_caddr   = fill_idx;
                 fill_is_bias = 1'b0; fill_which = 1'b0;
             end
             2'd1: begin
                 fill_rom_addr = fill_blk_base + B_FC1B + fill_idx;
-                fill_caddr   = fill_layer*D_FF + fill_idx;
+                fill_caddr   = fill_idx;
                 fill_is_bias = 1'b1; fill_which = 1'b0;
             end
             2'd2: begin
                 fill_rom_addr = fill_blk_base + B_FC2W + fill_idx;
-                fill_caddr   = fill_layer*(D_FF*D_MODEL) + fill_idx;
+                fill_caddr   = fill_idx;
                 fill_is_bias = 1'b0; fill_which = 1'b1;
             end
             default: begin
                 fill_rom_addr = fill_blk_base + B_FC2B + fill_idx;
-                fill_caddr   = fill_layer*D_MODEL + fill_idx;
+                fill_caddr   = fill_idx;
                 fill_is_bias = 1'b1; fill_which = 1'b1;
             end
         endcase
@@ -505,7 +505,6 @@ module transformer_engine #(
             fc1_start <= 0; fc2_start <= 0; lm_start <= 0;
             attn_res_pending <= 0; attn_res_addr <= 0; attn_res_data <= 0;
             fc2_res_pending <= 0; fc2_res_addr <= 0; fc2_res_data <= 0;
-            caches_valid <= 1'b0;
             filling <= 1'b0; fill_layer <= 0; fill_phase <= 0; fill_idx <= 0;
         end else begin
             done <= 1'b0;
@@ -516,40 +515,28 @@ module transformer_engine #(
                     if (start) begin
                         if (seq_len == 0 || seq_len > MAX_SEQ_LEN) begin
                             error <= 1'b1; done <= 1'b1;
-                        end else if (!caches_valid) begin
-                            // Preload the resident MLP caches once.
-                            error <= 1'b0;
-                            seq_len_reg <= seq_len;
-                            filling <= 1'b1; fill_layer <= 0; fill_phase <= 0; fill_idx <= 0;
-                            state <= S_FILL;
                         end else begin
+                            // Preload layer zero before the embedding pass.
                             error <= 1'b0; busy <= 1'b1;
                             seq_len_reg <= seq_len;
-                            t_cnt <= cache_len; c_cnt <= 0; e_cnt <= 0; p_cnt <= 0;
+                            filling <= 1'b1; fill_layer <= 0; fill_phase <= 0; fill_idx <= 0;
                             l_cnt <= 0; blk_base <= TOK_SIZE + POS_SIZE;
                             rom_owner <= OWN_CTRL;
-                            state <= S_EMB_TOK_ISS;
+                            state <= S_FILL;
                         end
                     end
                 end
 
-                // ── One-time MLP cache preload from the flat ROM ──
+                // ── Current layer's MLP cache preload from the flat ROM ──
                 S_FILL: begin
                     if (fill_idx + 1'b1 == fill_limit) begin
                         fill_idx <= 0;
                         if (fill_phase == 2'd3) begin
                             fill_phase <= 0;
-                            if (fill_layer == NUM_LAYERS-1) begin
-                                filling <= 1'b0;
-                                caches_valid <= 1'b1;
-                                busy <= 1'b1;
-                                t_cnt <= cache_len; c_cnt <= 0; e_cnt <= 0; p_cnt <= 0;
-                                l_cnt <= 0; blk_base <= TOK_SIZE + POS_SIZE;
-                                rom_owner <= OWN_CTRL;
-                                state <= S_EMB_TOK_ISS;
-                            end else begin
-                                fill_layer <= fill_layer + 1'b1;
-                            end
+                            filling <= 1'b0;
+                            t_cnt <= cache_len; c_cnt <= 0; e_cnt <= 0; p_cnt <= 0;
+                            rom_owner <= OWN_CTRL;
+                            state <= (fill_layer == 0) ? S_EMB_TOK_ISS : S_LN1_START;
                         end else begin
                             fill_phase <= fill_phase + 1'b1;
                         end
@@ -733,7 +720,10 @@ module transformer_engine #(
                             end else begin
                                 l_cnt <= l_cnt + 1;
                                 blk_base <= blk_base + BLOCK_STRIDE;
-                                state <= S_LN1_START;
+                                filling <= 1'b1;
+                                fill_layer <= fill_layer + 1'b1;
+                                fill_phase <= 0; fill_idx <= 0;
+                                state <= S_FILL;
                             end
                         end else begin
                             t_cnt <= t_cnt + 1;

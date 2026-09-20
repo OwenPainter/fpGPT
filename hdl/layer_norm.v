@@ -108,7 +108,9 @@ module layer_norm #(
             div_ub   <= div_den;
             div_rem  <= 0;
             div_q    <= 0;
-            div_cnt  <= DW;
+            // A zero divisor has no meaningful quotient; define it as 0 and
+            // finish immediately so the FSM can never stall waiting for done.
+            div_cnt  <= (div_den == 0) ? 7'd0 : DW;
             div_busy <= 1'b1;
         end else if (div_busy) begin
             if (div_cnt != 0) begin
@@ -264,10 +266,18 @@ module layer_norm #(
                 S_SQRT: begin
                     if (sqrt_done) begin
                         root <= sqrt_root;
-                        div_num <= (1 << SHIFT);
-                        div_den <= sqrt_root;
-                        div_start <= 1'b1;
-                        state <= S_INVDIV;
+                        // Guard against a zero root (should not happen for a
+                        // positive variance) so the inverse divide never sees a
+                        // zero denominator and cannot stall.
+                        if (sqrt_root == 0) begin
+                            inv <= (1 << SHIFT);
+                            state <= S_GAMMA;
+                        end else begin
+                            div_num <= (1 << SHIFT);
+                            div_den <= sqrt_root;
+                            div_start <= 1'b1;
+                            state <= S_INVDIV;
+                        end
                     end
                 end
 

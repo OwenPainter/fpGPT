@@ -40,7 +40,7 @@ def reference(weights, biases, xs, shifts, width=8):
                      'requires Icarus Verilog')
 class AttnProjTests(unittest.TestCase):
     def simulate(self, dim, num_pes, length, max_seq=8, seed=4321,
-                 shifts=(2, 3, 1, 2), width=8):
+                 shifts=(2, 3, 1, 2), width=8, cache_len=0):
         rng = random.Random(seed)
         weights = [[[rng.randint(-16, 16) for _ in range(dim)]
                     for _ in range(dim)] for _ in range(4)]
@@ -80,7 +80,7 @@ reg rst_n=0;
 reg start=0;
 reg [1:0] projection=0;
 reg [{len_w-1}:0] length={length};
-reg [{len_w-1}:0] cache_len=0;
+reg [{len_w-1}:0] cache_len={cache_len};
 
 wire [{w_addr_width-1}:0] w_addr_q, w_addr_k, w_addr_v, w_addr_o;
 wire w_gather_q, w_gather_k, w_gather_v, w_gather_o;
@@ -173,7 +173,7 @@ initial begin
         @(negedge clk); start=1;
         @(negedge clk); start=0;
         wait(done); @(negedge clk);
-        for (t=0; t<{length}; t=t+1)
+        for (t={cache_len}; t<{length}; t=t+1)
             for (r=0; r<{dim}; r=r+1)
                 if (got[p*{x_depth} + t*{dim} + r] !== expected[p*{x_depth} + t*{dim} + r])
                     $fatal(1, "p=%0d t=%0d r=%0d got %0d exp %0d",
@@ -206,6 +206,18 @@ endmodule
         for num_pes in (1, 2, 4):
             with self.subTest(num_pes=num_pes):
                 self.simulate(8, num_pes, length=4)
+
+    def test_num_pes_8(self):
+        for num_pes in (8,):
+            with self.subTest(num_pes=num_pes):
+                self.simulate(8, num_pes, length=4, seed=808)
+
+    def test_multi_token_range(self):
+        # cache_len > 0 must start mid-sequence and only emit [cache_len, length).
+        for cache_len, length in ((2, 6), (5, 7)):
+            with self.subTest(cache_len=cache_len, length=length):
+                self.simulate(8, 4, length=length, cache_len=cache_len,
+                              seed=909 + cache_len)
 
     def test_saturating(self):
         self.simulate(4, 2, length=3, shifts=(0, 0, 0, 0), seed=11)

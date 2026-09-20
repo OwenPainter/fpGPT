@@ -23,7 +23,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 class GenerationControllerTests(unittest.TestCase):
     def simulate(self, model, tokens, dim, heads, length, layers, d_ff, vocab,
                  shifts=(0, 0, 0, 0), mult=64, score_shift=8, ln_shift=7,
-                 gen_tokens=1):
+                 gen_tokens=1, prompts=None, stall_output=False):
         helper = GPTControllerTests()
 
         def argmax_id(seq):
@@ -35,24 +35,43 @@ class GenerationControllerTests(unittest.TestCase):
             return (tok_id - 3 + 32) if tok_id >= 3 else ord('.')
 
         # Mirror the controller: run the engine, emit argmax, append and repeat.
-        seq = list(tokens)
+        prompts = prompts or [tokens]
         expected_bytes = []
-        for _ in range(gen_tokens):
-            best_id = argmax_id(seq)
-            expected_bytes.append(to_byte(best_id))
-            if len(seq) < length:
+        for prompt in prompts:
+            seq = list(prompt[:length-gen_tokens])
+            for _ in range(gen_tokens):
+                best_id = argmax_id(seq)
+                expected_bytes.append(to_byte(best_id))
                 seq.append(best_id)
+        total_tokens = len(expected_bytes)
 
         image = helper.rom_image(model, dim, length, vocab, d_ff)
         w_addr_width = max(1, (len(image) - 1).bit_length())
 
         # Prompt token IDs must be >= 3 so the byte mapping round-trips.
-        assert all(t >= 3 for t in tokens), "prompt tokens must map to characters"
-        prompt_bytes = [t - 3 + 32 for t in tokens]
-        prompt_send = "\n".join(
-            f"@(negedge clk); token_in={b}; token_valid=1;\n@(negedge clk); token_valid=0;"
-            for b in prompt_bytes
-        )
+        prompt_send = []
+        for request, prompt in enumerate(prompts):
+            assert all(t >= 3 for t in prompt), "prompt tokens must map to characters"
+            for t in prompt:
+                prompt_send.append(f"@(negedge clk); token_in={t-3+32}; token_valid=1;\n"
+                                   "@(negedge clk); token_valid=0;")
+            overflow = int(len(prompt) > length-gen_tokens)
+            prompt_send.append(f"""
+    @(negedge clk); token_in=13; token_valid=1;
+    @(negedge clk); token_in=10;
+    @(negedge clk); token_valid=0;
+    wait(got == {(request+1)*gen_tokens});
+    @(negedge clk);
+    if (busy || dut.seq_len != 0 || dut.cache_len != 0)
+        $fatal(1,"request did not clear its context");
+    if (dut.prompt_overflow !== 1'b{overflow}) $fatal(1,"overflow flag mismatch");
+    // A blank line after completion must not regenerate the old context.
+    token_in=10; token_valid=1;
+    @(negedge clk); token_valid=0;
+    repeat(20) @(negedge clk);
+    if (busy || got != {(request+1)*gen_tokens}) $fatal(1,"blank line triggered generation");
+""")
+        prompt_send = "\n".join(prompt_send)
         hex_lines = "\n".join(f"{v & 0xFF:02X}" for v in image)
         expected_checks = "\n".join(
             f"expected_bytes[{i}] = {v};" for i, v in enumerate(expected_bytes)
@@ -60,7 +79,7 @@ class GenerationControllerTests(unittest.TestCase):
         compare = "\n".join(
             f"    if (captured[{i}] !== expected_bytes[{i}]) "
             f"$fatal(1, \"token %0d got %0d expected %0d\", {i}, captured[{i}], expected_bytes[{i}]);"
-            for i in range(gen_tokens)
+            for i in range(total_tokens)
         )
 
         tb = f'''
@@ -72,8 +91,13 @@ reg token_valid=0;
 wire [7:0] token_out;
 wire token_out_valid, busy;
 integer got=0;
-reg [7:0] captured [0:{gen_tokens-1}];
-integer expected_bytes [0:{gen_tokens-1}];
+reg [7:0] captured [0:{total_tokens-1}];
+integer expected_bytes [0:{total_tokens-1}];
+integer cycle=0;
+wire token_ready = {"(cycle % 8192) >= 6000" if stall_output else "1'b1"};
+always @(negedge clk) cycle=cycle+1;
+reg stalled=0;
+reg [7:0] held;
 
 generation_controller #(
     .DATA_WIDTH(8), .ACC_WIDTH(32), .D_MODEL({dim}), .NUM_HEADS({heads}),
@@ -86,21 +110,26 @@ generation_controller #(
     .ROM_MEM_FILE("weights.hex"), .GEN_TOKENS({gen_tokens}), .TOP_K(1)
 ) dut (
     .clk(clk), .rst_n(rst_n), .token_in(token_in), .token_valid(token_valid),
-    .token_out(token_out), .token_out_valid(token_out_valid), .busy(busy)
+    .token_out(token_out), .token_out_valid(token_out_valid), .busy(busy),
+    .token_out_ready(token_ready), .prompt_overflow()
 );
 
-always @(posedge clk) if (token_out_valid && got < {gen_tokens}) begin
-    captured[got] <= token_out;
-    got <= got + 1;
+always @(posedge clk) begin
+    if (stalled && (!token_out_valid || token_out !== held))
+        $fatal(1,"output changed under backpressure");
+    stalled <= token_out_valid && !token_ready;
+    held <= token_out;
+    if (token_out_valid && token_ready) begin
+        if (got >= {total_tokens}) $fatal(1,"extra output byte");
+        captured[got] <= token_out;
+        got <= got + 1;
+    end
 end
 
 initial begin
     {expected_checks}
     repeat(2) @(negedge clk); rst_n=1;
     {prompt_send}
-    @(negedge clk); token_in=8'h0A; token_valid=1;
-    @(negedge clk); token_valid=0;
-    wait(got == {gen_tokens});
     @(posedge clk);
 {compare}
     $display("PASS");
@@ -135,9 +164,9 @@ endmodule
         rng = random.Random(0xA5)
         tokens = [4, 5, 6]
         model = GPTControllerTests().build_model(
-            rng, dim=4, heads=2, length=3, layers=2, d_ff=4, vocab=8,
+            rng, dim=4, heads=2, length=4, layers=2, d_ff=4, vocab=8,
             shifts=(0, 0, 0, 0))
-        self.simulate(model, tokens, dim=4, heads=2, length=3, layers=2, d_ff=4,
+        self.simulate(model, tokens, dim=4, heads=2, length=4, layers=2, d_ff=4,
                       vocab=8, gen_tokens=1)
 
     @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
@@ -151,6 +180,25 @@ endmodule
             shifts=(0, 0, 0, 0))
         self.simulate(model, tokens, dim=4, heads=2, length=6, layers=1, d_ff=4,
                       vocab=8, gen_tokens=3)
+
+    @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"), "requires Icarus Verilog")
+    def test_repeated_prompts_overflow_and_backpressure(self):
+        model = GPTControllerTests().build_model(
+            random.Random(317), dim=4, heads=2, length=8, layers=2,
+            d_ff=4, vocab=8, shifts=(0, 0, 0, 0))
+        self.simulate(model, [4], dim=4, heads=2, length=8, layers=2,
+                      d_ff=4, vocab=8, gen_tokens=4, stall_output=True,
+                      prompts=[[4, 5, 6, 7], [7]*12, [6], [3, 4, 5, 6]])
+
+    @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"), "requires Icarus Verilog")
+    def test_128_context_96_prompt_32_output(self):
+        # Synthetic 128-position model: verifies counters and reserved space;
+        # it does not claim the checked-in 64-position checkpoint is extended.
+        model = GPTControllerTests().build_model(
+            random.Random(128), dim=4, heads=2, length=128, layers=1,
+            d_ff=4, vocab=8, shifts=(0, 0, 0, 0))
+        self.simulate(model, [4]*96, dim=4, heads=2, length=128, layers=1,
+                      d_ff=4, vocab=8, gen_tokens=32)
 
 
 if __name__ == "__main__":

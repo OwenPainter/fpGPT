@@ -27,7 +27,8 @@ class BoardParamsParserTests(unittest.TestCase):
         self.assertEqual(params.gen_tokens, 16)
         self.assertEqual(params.baud_rate, 115200)
         self.assertEqual(params.rom_mem_file, "weights_unified.hex")
-        self.assertEqual(params.shifts["q_shift"], 6)
+        # This header is regenerated from the selected checkpoint; shifts vary.
+        self.assertIsInstance(params.shifts["q_shift"], int)
         self.assertEqual(params.source, str(CHECKED_IN))
 
     def test_char_range_matches_tokenizer(self):
@@ -45,6 +46,7 @@ class BoardParamsParserTests(unittest.TestCase):
             "`define FPGPT_DATA_WIDTH 8   // inline comment",
             "`define FPGPT_ROM_MEM_FILE \"weights/engine/weights_unified.hex\"",
             "`define FPGPT_ROM_DEPTH 1_024",
+            "`define FPGPT_Q_SHIFT 8",
             "`define FPGPT_TOTALLY_NEW 42",
             "`define FPGPT_D_MODEL (2*32)",
         ])
@@ -55,6 +57,7 @@ class BoardParamsParserTests(unittest.TestCase):
         self.assertEqual(params.data_width, 8)
         self.assertEqual(params.rom_mem_file, "weights/engine/weights_unified.hex")
         self.assertEqual(params.rom_depth, 1024)
+        self.assertEqual(params.shifts["q_shift"], 8)
         # Unknown macros are ignored, and unparseable expressions are skipped
         # (default kept) rather than crashing.
         self.assertEqual(params.d_model, 64)

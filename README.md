@@ -43,6 +43,11 @@ On-chip, `fpga_top.v` connects UART to `generation_controller.v`, which wraps
 `embeddings → LN1 → attention → residual → LN2 → MLP → residual → final LN →
 LM head`; the controller buffers a prompt, runs one forward pass per generated
 character, selects the next token from the top-k logits, and feeds it back.
+Each prompt starts a fresh context, with `GEN_TOKENS` slots reserved for the
+reply and a valid/ready handshake to prevent UART drops. The current checkpoint
+supports 48 prompt characters plus 16 output characters; see
+[capacity configuration](fpga/PROGRAMMING.md#prompt-and-output-capacity) for
+larger trained models and the compiler's `--gen-tokens` option.
 
 ## What works today
 
@@ -94,8 +99,7 @@ character, selects the next token from the top-k logits, and feeds it back.
   8-bit vs accumulator-domain biases); see
   [docs/fixed_point.md](docs/fixed_point.md#integration-status).
 - `hdl/gpt_controller.v` and `hdl/transformer_block.v` have been deleted.
-- Sampling is LFSR-indexed top-k only (no temperature), and there is no output
-  backpressure for the slower UART.
+- Sampling is LFSR-indexed top-k only (no temperature).
 - The `UART_TXD`/`UART_RXD` pins are on GPIO_0 and need an external 3.3 V
   USB-TTL adapter; the onboard USB-UART belongs to the HPS.
 

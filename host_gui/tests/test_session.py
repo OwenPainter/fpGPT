@@ -74,6 +74,18 @@ class ScriptedTransport(Transport):
 
 
 class LegacySessionTests(unittest.TestCase):
+    def test_oversized_prompt_is_rejected_before_transmission(self):
+        transport = ScriptedTransport(b"12345678")
+        session = ChatSession(transport, PARAMS)
+        ok, error = session.submit("A" * 57)
+        self.assertFalse(ok)
+        self.assertIn("56 characters", error)
+        self.assertEqual(transport.sent, b"")
+        self.assertEqual(session.state, SessionState.IDLE)
+        ok, error = session.submit("A" * 56)
+        self.assertTrue(ok, error)
+        self.assertEqual(transport.sent, b"A" * 56 + b"\n")
+
     def make_session(self, **kwargs):
         transport = MockTransport(gen_tokens=8, vocab_size=98, byte_delay=0.005)
         return ChatSession(transport, PARAMS, mode="legacy", **kwargs)

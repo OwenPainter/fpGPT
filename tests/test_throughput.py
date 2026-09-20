@@ -9,13 +9,10 @@ Run: python3 -m unittest tests.test_throughput -v
 Set FPGPT_THROUGHPUT_DEFAULT=1 to additionally measure a default-sized model
 (d_model=64, 4 layers, d_ff=256); that run is much slower in simulation.
 
-Packed weight bus (Task 2): hdl/rom_sync.v and hdl/weight_cache.v can return
-NUM_PES packed weight bytes per read, and the engine stops re-streaming the
-unified image every layer/token once hdl/dense_layer.v exposes its NUM_PES
-packed port (Task 1). This harness logs the single-byte baseline today; the
-packed path is measured once that port and the generation_controller wiring
-land. Baseline for the default shape: ~1.03M cycles for a 3-token prefill /
-~437k cycles per generated token.
+The engine caches one layer's MLP weights at a time and reads NUM_PES packed
+weight bytes per cycle. Refilling between layers saves M10K blocks compared
+with retaining every layer alongside the complete source ROM. Both scalar
+and packed paths include this refill overhead in their measurements.
 """
 import os
 import pathlib
@@ -76,7 +73,8 @@ generation_controller #(
 ) dut (
     .clk(clk), .rst_n(rst_n), .token_in(token_in), .token_valid(token_valid),
     .token_out(token_out), .token_out_valid(token_out_valid), .busy(busy),
-    .gen_cycles(gen_cycles)
+    .gen_cycles(gen_cycles),
+    .token_out_ready(1'b1), .prompt_overflow()
 );
 
 always @(posedge clk) if (busy) cycles = cycles + 1;

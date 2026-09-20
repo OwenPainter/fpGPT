@@ -105,8 +105,19 @@ def export_all_weights(ir: ModelIR, output_dir: str, fmt: str = "both",
     def _export(name: str, tensor: QuantizedTensor):
         if tensor is None:
             return
-        # Mixed-width tensors share a byte-addressed ROM. Multi-byte values
-        # are little-endian; standalone tensor files retain their native width.
+        # The engine reads every tensor as one DATA_WIDTH word at the fixed
+        # sequential offsets in hdl/transformer_engine.v, so the unified image
+        # written for it must be uniform width. The mixed fixed-point contract
+        # (64-bit biases, 32-bit LayerNorm gamma/beta) is only for the
+        # per-tensor files and the standalone `weights_unified.hex`.
+        if unified_only and tensor.bit_width != ir.bit_width:
+            raise ValueError(
+                f"{name}: engine image must be uniform {ir.bit_width}-bit, "
+                f"got {tensor.bit_width}-bit; pass the engine_compatible IR "
+                f"(quantize_model(..., engine_compatible=True))"
+            )
+        # Multi-byte values are little-endian; standalone tensor files retain
+        # their native width.
         for value in tensor.data.flat:
             unified.extend((int(value) >> (8*i)) & 255 for i in range(tensor.bit_width//8))
         if unified_only:
@@ -172,3 +183,18 @@ def export_all_weights(ir: ModelIR, output_dir: str, fmt: str = "both",
     with open(os.path.join(output_dir, 'weights_unified.hex'), 'w') as f:
         f.write(''.join(f'{v:02X}\n' for v in unified))
     return exported
+
+
+def export_engine_image(ir: ModelIR, output_dir: str) -> str:
+    """Write the uniform-width byte image consumed by hdl/transformer_engine.v.
+
+    ``ir`` must be the ``engine_compatible=True`` quantization in which every
+    tensor is exactly ``ir.bit_width`` bits (8-bit signed for INT8), laid out in
+    the sequential order the engine's ``B_*`` localparams expect. A mixed-width
+    fixed-contract IR is rejected rather than silently producing an image the
+    engine would decode at the wrong offsets.
+
+    Returns the path to ``<output_dir>/weights_unified.hex``.
+    """
+    export_all_weights(ir, output_dir, fmt="hex", unified_only=True)
+    return os.path.join(output_dir, 'weights_unified.hex')

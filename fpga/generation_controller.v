@@ -15,6 +15,9 @@
 // The engine's streamed logits are for the last sequence position, so one
 // forward pass yields exactly one next token. Generated tokens are appended
 // to the sequence and fed back for GEN_TOKENS steps.
+// Each request starts fresh. At most MAX_SEQ_LEN-GEN_TOKENS prompt bytes
+// are retained; excess bytes set prompt_overflow and are ignored until CR/LF.
+// token_out/data remain stable until token_out_ready acknowledges the byte.
 // ═══════════════════════════════════════════════════════════════
 
 module generation_controller #(
@@ -55,7 +58,10 @@ module generation_controller #(
     input  wire        token_valid,
     output reg  [7:0]  token_out,
     output reg         token_out_valid,
+    input  wire        token_out_ready,
     output reg         busy,
+    // Sticky for the current/most recent prompt; excess bytes are discarded.
+    output reg         prompt_overflow,
 
     // Throughput hook: cycles consumed by the most recent generation burst.
     output reg  [31:0] gen_cycles
@@ -64,6 +70,8 @@ module generation_controller #(
     localparam TOK_AW  = (MAX_SEQ_LEN <= 1) ? 1 : $clog2(MAX_SEQ_LEN);
     localparam LEN_W   = ((MAX_SEQ_LEN+1) <= 1) ? 1 : $clog2(MAX_SEQ_LEN+1);
     localparam VOC_AW  = (VOCAB_SIZE <= 1) ? 1 : $clog2(VOCAB_SIZE);
+    localparam GEN_W = (GEN_TOKENS <= 1) ? 1 : $clog2(GEN_TOKENS+1);
+    localparam MAX_PROMPT_LEN = MAX_SEQ_LEN - GEN_TOKENS;
     localparam signed [DATA_WIDTH-1:0] MIN_LOGIT = {1'b1, {DATA_WIDTH-1{1'b0}}};
 
     localparam S_COLLECT   = 2'd0,
@@ -74,7 +82,8 @@ module generation_controller #(
     reg [1:0]  state;
     reg [LEN_W-1:0]   seq_len;
     reg [LEN_W-1:0]   cache_len;
-    reg [LEN_W-1:0]   gen_count;
+    reg [GEN_W-1:0]   gen_count;
+    reg [TOKID_W-1:0] emitted_idx;
     reg               eng_start;
     reg               tok_load;
     reg [TOK_AW-1:0]  tok_addr;
@@ -95,6 +104,13 @@ module generation_controller #(
     wire signed [DATA_WIDTH-1:0] eng_logits_data;
     wire [W_ADDR_WIDTH-1:0] eng_rom_addr;
     wire signed [DATA_WIDTH-1:0] eng_rom_data;
+
+    // synthesis translate_off
+    initial begin
+        if (GEN_TOKENS < 1 || GEN_TOKENS >= MAX_SEQ_LEN)
+            $fatal(1, "GEN_TOKENS must be in 1..MAX_SEQ_LEN-1");
+    end
+    // synthesis translate_on
 
     // ── Engine ──
     transformer_engine #(
@@ -151,6 +167,8 @@ module generation_controller #(
             seq_len         <= 0;
             cache_len       <= 0;
             gen_count       <= 0;
+            emitted_idx     <= 0;
+            prompt_overflow <= 1'b0;
             eng_start       <= 1'b0;
             tok_load        <= 1'b0;
             tok_addr        <= 0;
@@ -169,7 +187,6 @@ module generation_controller #(
             busy            <= 1'b0;
             gen_cycles      <= 32'd0;
         end else begin
-            token_out_valid <= 1'b0;
             tok_load        <= 1'b0;
             if (state != S_COLLECT)
                 gen_cycles <= gen_cycles + 32'd1;
@@ -189,11 +206,14 @@ module generation_controller #(
                                 cache_len  <= 0;
                                 state      <= S_GEN_START;
                             end
-                        end else if (seq_len < MAX_SEQ_LEN) begin
+                        end else if (seq_len < MAX_PROMPT_LEN) begin
+                            if (seq_len == 0) prompt_overflow <= 1'b0;
                             tok_load <= 1'b1;
                             tok_addr <= seq_len[TOK_AW-1:0];
                             tok_data <= byte_to_id(token_in);
                             seq_len  <= seq_len + 1'b1;
+                        end else begin
+                            prompt_overflow <= 1'b1;
                         end
                     end
                 end
@@ -229,22 +249,31 @@ module generation_controller #(
                     if (eng_done) state <= S_GEN_EMIT;
                 end
 
-                // Emit the winning token and feed it back into the sequence.
+                // Freeze the sampled token while the sink is busy. Advance
+                // the sequence only when valid && ready transfers this byte.
                 S_GEN_EMIT: begin
-                    token_out       <= id_to_byte(selected_idx);
-                    token_out_valid <= 1'b1;
-                    if (seq_len < MAX_SEQ_LEN) begin
-                        tok_load <= 1'b1;
-                        tok_addr <= seq_len[TOK_AW-1:0];
-                        tok_data <= selected_idx;
-                        cache_len <= seq_len;
-                        seq_len  <= seq_len + 1'b1;
+                    if (!token_out_valid) begin
+                        token_out       <= id_to_byte(selected_idx);
+                        emitted_idx     <= selected_idx;
+                        token_out_valid <= 1'b1;
+                    end else if (token_out_ready) begin
+                        token_out_valid <= 1'b0;
+                        gen_count <= gen_count + 1'b1;
+                        if (gen_count == GEN_TOKENS-1) begin
+                            // Independent requests: no stale prompt or KV prefix.
+                            seq_len   <= 0;
+                            cache_len <= 0;
+                            busy      <= 1'b0;
+                            state     <= S_COLLECT;
+                        end else begin
+                            tok_load  <= 1'b1;
+                            tok_addr  <= seq_len[TOK_AW-1:0];
+                            tok_data  <= emitted_idx;
+                            cache_len <= seq_len;
+                            seq_len   <= seq_len + 1'b1;
+                            state     <= S_GEN_START;
+                        end
                     end
-                    gen_count <= gen_count + 1'b1;
-                    if (((gen_count + 1'b1) < GEN_TOKENS) && (seq_len < MAX_SEQ_LEN))
-                        state <= S_GEN_START;
-                    else
-                        state <= S_COLLECT;
                 end
 
                 default: state <= S_COLLECT;
