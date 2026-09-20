@@ -24,3 +24,39 @@ def test_build_slm_transport():
                          rom_depth=212352, baud_rate=115200, sys_clk_hz=62500000)
     transport = build_transport(cfg, params)
     assert isinstance(transport, SlmTransport)
+
+
+def test_slm_session_natural_conversation():
+    from fgpt_gui.session import ChatSession, SessionState
+
+    params = BoardParams(gen_tokens=16, max_seq_len=64, vocab_size=64, d_model=64,
+                         num_layers=4, num_heads=4, d_ff=256, w_addr_width=18,
+                         rom_depth=212352, baud_rate=115200, sys_clk_hz=62500000)
+    t = SlmTransport(engine="assistant", byte_delay=0.0005)
+    session = ChatSession(t, params, mode="legacy", gen_tokens=256, reply_timeout=3.0)
+
+    clean, removed = session.sanitize("Hello! Is this a hot dog?")
+    assert len(removed) == 0
+    assert clean == "Hello! Is this a hot dog?"
+
+    with session:
+        sub = session.subscribe()
+        ok, err = session.submit(clean)
+        assert ok is True
+
+        reply_done = False
+        reply_text = ""
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            event = sub.get(timeout=1.0)
+            if event.get("type") == "reply_end":
+                reply_done = True
+                reply_text = event.get("text", "")
+                break
+
+        assert reply_done is True
+        assert len(reply_text) > 10
+        assert not reply_text.startswith(" ")
+        assert "hot dog" in reply_text.lower() or "seefood" in reply_text.lower()
+        assert session.state == SessionState.IDLE
+
