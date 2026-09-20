@@ -11,8 +11,10 @@
     "fpga/uart_rx.v::WIDTHEXPAND": 3,
     "fpga/uart_tx.v::WIDTHEXPAND": 3,
     "hdl/activation.v::UNUSEDSIGNAL": 1,
+    "hdl/attention.v::UNUSEDSIGNAL": 1,
     "hdl/attention.v::WIDTHEXPAND": 8,
     "hdl/attention.v::WIDTHTRUNC": 3,
+    "hdl/attn_proj.v::WIDTHEXPAND": 2,
     "hdl/dense_layer.v::WIDTHEXPAND": 8,
     "hdl/dense_layer.v::WIDTHTRUNC": 2,
     "hdl/fixed_layer_norm.v::SYNCASYNCNET": 1,
@@ -22,10 +24,19 @@
     "hdl/fixed_linear.v::WIDTHEXPAND": 3,
     "hdl/fixed_linear.v::WIDTHTRUNC": 1,
     "hdl/fixed_residual.v::WIDTHEXPAND": 2,
+    "hdl/layer_norm.v::UNUSEDSIGNAL": 7,
     "hdl/layer_norm.v::WIDTHEXPAND": 9,
     "hdl/layer_norm.v::WIDTHTRUNC": 6,
+    "hdl/rom_sync.v::DECLFILENAME": 1,
+    "hdl/rom_sync.v::WIDTHEXPAND": 2,
+    "hdl/rom_sync.v::WIDTHTRUNC": 1,
+    "hdl/transformer_engine.v::PINCONNECTEMPTY": 1,
+    "hdl/transformer_engine.v::UNUSEDPARAM": 2,
     "hdl/transformer_engine.v::UNUSEDSIGNAL": 3,
     "hdl/transformer_engine.v::WIDTHEXPAND": 40,
-    "hdl/transformer_engine.v::WIDTHTRUNC": 2
+    "hdl/transformer_engine.v::WIDTHTRUNC": 2,
+    "hdl/weight_cache.v::DECLFILENAME": 1,
+    "hdl/weight_cache.v::WIDTHEXPAND": 4,
+    "hdl/weight_cache.v::WIDTHTRUNC": 8
   }
 }
