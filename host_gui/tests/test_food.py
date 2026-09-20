@@ -101,12 +101,11 @@ class ClassifierStatusTests(unittest.TestCase):
         # Available depends on the optional TFLite runtime being installed.
         if status["runtime_installed"]:
             self.assertTrue(status["available"])
-            self.assertEqual(status["threshold"], 0.35)
-            self.assertEqual(status["not_hotdog_min_confidence"], 0.65)
+            self.assertEqual(status["threshold"], 0.5)
 
 
 class ThresholdRuleTests(unittest.TestCase):
-    def test_not_hotdog_only_when_above_65_percent_confidence(self):
+    def test_standard_50_percent_threshold(self):
         from unittest.mock import MagicMock
         import numpy as np
 
@@ -129,34 +128,29 @@ class ThresholdRuleTests(unittest.TestCase):
             classifier._interpreter = mock_interp
             return classifier.predict(fake_bytes)
 
-        # 1. Very strong not-hotdog (score 0.10 => 90% not-hotdog, which is > 65%)
-        res = test_score(0.10)
-        self.assertFalse(res["is_hotdog"])
-        self.assertEqual(res["label"], "Not a hot dog.")
-        self.assertAlmostEqual(res["confidence"], 0.90, places=2)
-
-        # 2. Borderline not-hotdog (score 0.34 => 66% not-hotdog, which is > 65%)
-        res = test_score(0.34)
-        self.assertFalse(res["is_hotdog"])
-        self.assertEqual(res["label"], "Not a hot dog.")
-        self.assertAlmostEqual(res["confidence"], 0.66, places=2)
-
-        # 3. Weak not-hotdog (score 0.40 => 60% not-hotdog, which is NOT > 65%) -> MUST be Hot dog!
-        res = test_score(0.40)
-        self.assertTrue(res["is_hotdog"])
-        self.assertEqual(res["label"], "Hot dog!")
-        self.assertAlmostEqual(res["confidence"], 0.40, places=2)
-
-        # 4. Score 0.48 (52% not-hotdog, NOT > 65%) -> MUST be Hot dog!
-        res = test_score(0.48)
-        self.assertTrue(res["is_hotdog"])
-        self.assertEqual(res["label"], "Hot dog!")
-
-        # 5. Definite hot dog (score 0.85) -> Hot dog!
+        # 1. Hot dog (score 0.85) -> Hot dog! (85% confident)
         res = test_score(0.85)
         self.assertTrue(res["is_hotdog"])
         self.assertEqual(res["label"], "Hot dog!")
         self.assertAlmostEqual(res["confidence"], 0.85, places=2)
+
+        # 2. Hot dog borderline (score 0.51) -> Hot dog! (51% confident)
+        res = test_score(0.51)
+        self.assertTrue(res["is_hotdog"])
+        self.assertEqual(res["label"], "Hot dog!")
+        self.assertAlmostEqual(res["confidence"], 0.51, places=2)
+
+        # 3. Not a hot dog borderline (score 0.49) -> Not a hot dog. (51% confident)
+        res = test_score(0.49)
+        self.assertFalse(res["is_hotdog"])
+        self.assertEqual(res["label"], "Not a hot dog.")
+        self.assertAlmostEqual(res["confidence"], 0.51, places=2)
+
+        # 4. Not a hot dog clear (score 0.10) -> Not a hot dog. (90% confident)
+        res = test_score(0.10)
+        self.assertFalse(res["is_hotdog"])
+        self.assertEqual(res["label"], "Not a hot dog.")
+        self.assertAlmostEqual(res["confidence"], 0.90, places=2)
 
 
 if __name__ == "__main__":
