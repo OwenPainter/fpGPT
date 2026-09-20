@@ -18,7 +18,7 @@ set_global_assignment -name DEVICE_FILTER_PIN_COUNT 896
 set_global_assignment -name DEVICE_FILTER_SPEED_GRADE 6
 set_global_assignment -name TOP_LEVEL_ENTITY fpga_top
 set_global_assignment -name ORIGINAL_QUARTUS_VERSION 20.1.1
-set_global_assignment -name LAST_QUARTUS_VERSION "20.1.1 Lite Edition"
+set_global_assignment -name LAST_QUARTUS_VERSION "25.1std.0 Lite Edition"
 set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
 set_global_assignment -name BOARD "DE1-SoC Board"
 
@@ -36,6 +36,7 @@ set_global_assignment -name VERILOG_FILE ../hdl/transformer_engine.v
 set_global_assignment -name VERILOG_FILE ../hdl/attention.v
 set_global_assignment -name VERILOG_FILE ../hdl/layer_norm.v
 set_global_assignment -name VERILOG_FILE ../hdl/dense_layer.v
+set_global_assignment -name VERILOG_FILE ../hdl/weight_cache.v
 set_global_assignment -name VERILOG_FILE ../hdl/mac_unit.v
 set_global_assignment -name VERILOG_FILE ../hdl/activation.v
 set_global_assignment -name VERILOG_FILE ../hdl/rom_sync.v

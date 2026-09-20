@@ -50,10 +50,13 @@ module tb_fpga_top;
     );
 
     // Zero the weight ROM so the engine produces all-zero logits (argmax = 0).
+    // The bank memory lives in the rom_bank submodule (rom_sync.bank[0].u_bank);
+    // the #1 lets its time-0 initialization finish first.
     integer i;
     initial begin
+        #1;
         for (i = 0; i < ROM_DEPTH; i = i + 1)
-            dut.controller_inst.weight_rom_inst.mem[i] = 8'h00;
+            dut.controller_inst.weight_rom_inst.bank[0].u_bank.mem[i] = 8'h00;
     end
 
     localparam CLOCKS_PER_BIT = 50000000 / 115200;

@@ -36,6 +36,11 @@
 // ── Decode configuration ──
 `define FPGPT_GEN_TOKENS      16
 
+// Output features computed concurrently per PE-array pass. Must be a power of
+// two and divide D_FF, D_MODEL and VOCAB_SIZE (see hdl/weight_cache.v). 1 keeps
+// the original single-byte ROM path.
+`define FPGPT_NUM_PES         4
+
 // ── Fixed-point shifts (layer 0; engine uses one global value) ──
 `define FPGPT_Q_SHIFT         6
 `define FPGPT_K_SHIFT         6
@@ -49,7 +54,7 @@
 `define FPGPT_LM_SHIFT        6
 
 // ── Board / host interface ──
-`define FPGPT_SYS_CLK_HZ      150000000
+`define FPGPT_SYS_CLK_HZ      62500000
 `define FPGPT_BAUD_RATE       115200
 
 `endif // FPGPT_BOARD_PARAMS_VH

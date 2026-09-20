@@ -1,40 +1,115 @@
 // ═══════════════════════════════════════════════════════════════
-// fpGPT — Synchronous ROM (M10K Block RAM Inference)
-// Target: Intel Cyclone V M10K embedded memory blocks
+// fpGPT — Banked synchronous weight ROM (M10K)
 //
-// This module is written to follow Quartus synthesis guidelines
-// for automatic M10K block RAM inference:
-//   - Single-port synchronous read
-//   - Registered output
-//   - Initialized via $readmemh
+// The unified image is a flat, row-major byte stream. To feed a
+// NUM_PES-wide output-stationary PE array, the bytes are de-interleaved
+// across NUM_PES banks:
 //
-// Each M10K block provides 10,240 bits = 1,280 bytes.
-// The Cyclone V 5CSEMA5F31C6 has 397 M10K blocks = ~556 KB total.
+//     bank b holds row j for every j ≡ b (mod NUM_PES)
+//
+// A read presents a *bank address* `addr = (j_base / NUM_PES) * IN_FEATURES
+// + i` and returns NUM_PES packed bytes, little-endian:
+//
+//     data[k*DATA_WIDTH +: DATA_WIDTH] = image[(j_base + k)*IN_FEATURES + i]
+//
+// NUM_PES = 1 reproduces the original flat ROM exactly (bank address == flat
+// byte address), so existing instantiations are unchanged.
+//
+// Initialization reads the flat MEM_FILE and re-interleaves it into the banks
+// (simulation/behavioral). For a synthesizable banked image, feed the flat
+// file through hdl/weight_cache.v, whose banks are written by the engine FSM.
+//
+// NOTE: the bank memory lives in the rom_bank submodule (instantiated in the
+// rom_sync generate). Memory arrays must never be declared directly inside a
+// generate block: Quartus 25.1 Analysis & Synthesis hangs on that (same issue
+// fixed in hdl/weight_cache.v). The de-interleave helper memory is module
+// scope and behind `synthesis translate_off` so Quartus never sees it.
 // ═══════════════════════════════════════════════════════════════
 
-module rom_sync #(
-    parameter DATA_WIDTH = 8,
-    parameter ADDR_WIDTH = 16,
-    parameter DEPTH      = 65536,
-    parameter MEM_FILE   = "weights.hex"   // $readmemh initialization file
+module rom_bank #(
+    parameter DATA_WIDTH  = 8,
+    parameter NUM_PES     = 1,
+    parameter BANK        = 0,
+    parameter IN_FEATURES = 1,
+    parameter DEPTH       = 65536,
+    parameter BANK_DEPTH  = 65536,
+    parameter BANK_AW     = 16,
+    parameter MEM_FILE    = "weights.hex"
 ) (
-    input  wire                    clk,
-    input  wire [ADDR_WIDTH-1:0]  addr,
-    output reg  [DATA_WIDTH-1:0]  data
+    input  wire                         clk,
+    input  wire [BANK_AW-1:0]           rd_addr,
+    output reg  signed [DATA_WIDTH-1:0] q
 );
+    (* ramstyle = "M10K" *) reg [DATA_WIDTH-1:0] mem [0:BANK_DEPTH-1];
 
-    // Inferred M10K block RAM
-    // Quartus recognizes this pattern and maps it to M10K blocks
-    (* ramstyle = "M10K" *) reg [DATA_WIDTH-1:0] mem [0:DEPTH-1];
+    // Synchronous read of this bank.
+    always @(posedge clk)
+        q <= mem[rd_addr];
 
-    // Load weights from hex file at synthesis/simulation time
+    // ── Initialization (simulation / behavioral) ──
+    // Flat image plus de-interleave. Excluded from synthesis; the synthesized
+    // banked image is filled by hdl/weight_cache.v.
+    // synthesis translate_off
+    reg [DATA_WIDTH-1:0] flat [0:DEPTH-1];
+    integer f, j, i;
     initial begin
-        $readmemh(MEM_FILE, mem);
+        $readmemh(MEM_FILE, flat);
+        for (f = 0; f < DEPTH; f = f + 1) begin
+            j = f / IN_FEATURES;
+            i = f % IN_FEATURES;
+            if (NUM_PES == 1) begin
+                if (f < BANK_DEPTH)
+                    mem[f] = flat[f];
+            end else if ((j % NUM_PES) == BANK) begin
+                mem[(j / NUM_PES) * IN_FEATURES + i] = flat[f];
+            end
+        end
     end
+    // synthesis translate_on
+endmodule
 
-    // Synchronous read (1-cycle latency)
-    always @(posedge clk) begin
-        data <= mem[addr];
-    end
+
+module rom_sync #(
+    parameter DATA_WIDTH  = 8,
+    parameter NUM_PES     = 1,
+    parameter IN_FEATURES = 1,      // bytes per weight row (power of two)
+    parameter ADDR_WIDTH  = 16,
+    parameter DEPTH       = 65536,  // flat image bytes
+    parameter MEM_FILE    = "weights.hex"
+) (
+    input  wire                          clk,
+    input  wire [ADDR_WIDTH-1:0]         addr,   // bank address
+    output wire signed [NUM_PES*DATA_WIDTH-1:0] data
+);
+    localparam IN_SHIFT   = (IN_FEATURES <= 1) ? 0 : $clog2(IN_FEATURES);
+    localparam P_SHIFT    = (NUM_PES <= 1) ? 0 : $clog2(NUM_PES);
+    localparam ROWS       = (DEPTH + IN_FEATURES - 1) / IN_FEATURES;
+    localparam BANK_ROWS  = (ROWS + NUM_PES - 1) / NUM_PES;
+    localparam BANK_DEPTH = BANK_ROWS * IN_FEATURES;
+    localparam BANK_AW    = (BANK_DEPTH <= 1) ? 1 : $clog2(BANK_DEPTH);
+
+    // Flat read address addr = j_base*IN_FEATURES + i -> bank address
+    // (j_base / NUM_PES) * IN_FEATURES + i. NUM_PES == 1 is the identity.
+    wire [ADDR_WIDTH:0] r_j     = addr >> IN_SHIFT;
+    wire [ADDR_WIDTH:0] r_i     = addr & (IN_FEATURES - 1);
+    wire [BANK_AW-1:0]  rd_addr = ((r_j >> P_SHIFT) << IN_SHIFT) | r_i;
+
+    genvar b;
+    generate
+        for (b = 0; b < NUM_PES; b = b + 1) begin : bank
+            wire signed [DATA_WIDTH-1:0] q;
+
+            rom_bank #(
+                .DATA_WIDTH(DATA_WIDTH), .NUM_PES(NUM_PES), .BANK(b),
+                .IN_FEATURES(IN_FEATURES), .DEPTH(DEPTH),
+                .BANK_DEPTH(BANK_DEPTH), .BANK_AW(BANK_AW),
+                .MEM_FILE(MEM_FILE)
+            ) u_bank (
+                .clk(clk), .rd_addr(rd_addr), .q(q)
+            );
+
+            assign data[b*DATA_WIDTH +: DATA_WIDTH] = q;
+        end
+    endgenerate
 
 endmodule

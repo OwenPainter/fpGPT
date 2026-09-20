@@ -7,6 +7,11 @@ programming, and the UART smoke test.
 > Quartus Prime has not been run against this design in CI; the flow below is
 > the intended one and the numbers it produces are not yet recorded.
 
+> **Current status (bring-up):** the design compiles and closes timing at
+> 62.5 MHz with `NUM_PES=4`. If no compiled model is present, `build.tcl` writes
+> an all-zero ROM, so the smoke test only proves the clock/reset/UART/FSM path —
+> the board streams `.` characters, not real text.
+
 ## 0. Prerequisites
 
 - Intel Quartus Prime Lite 20.1 or newer (Cyclone V support).
@@ -47,14 +52,14 @@ grep -A20 "Fitter Summary" output_files/fpGPT.fit.rpt
 
 Record the following in the PR/README:
 
-- Fmax for `clk_sys` (target 150 MHz / 6.667 ns).
+- Fmax for `clk_sys` (current target 62.5 MHz / 16.0 ns).
 - ALM count, DSP block count, M10K block count.
 - Whether setup and hold are met.
 
-The design targets 150 MHz but has not been characterized; the combinational
-dividers in `layer_norm.v`/`attention.v` are the likely critical path. If
-150 MHz does not close, either lower the PLL to a frequency that does
-(`pll_150.v`) or remove the dividers.
+The design originally targeted 150 MHz but the combinational dividers in
+`layer_norm.v`/`attention.v` did not close. They were replaced with multi-cycle
+restoring units and the PLL was lowered to 62.5 MHz (`pll_150.v`), which closes
+with margin (slow-85C setup slack ~+2.8 ns, Fmax ~75 MHz at `NUM_PES=4`).
 
 ## 3. Program the FPGA (volatile, JTAG)
 
@@ -116,6 +121,6 @@ quality is expected to be poor; the test is that the pipeline runs end to end.
 | --- | --- |
 | No UART output | PLL locked (LEDR[1]), TX/RX not swapped, common ground, 3.3 V logic |
 | Output is `.` only | ROM not initialized (`weights_unified.hex` missing) or all-zero weights |
-| Garbage characters | Baud mismatch or wrong `CLK_FREQ` (must match the PLL output, 150 MHz) |
+| Garbage characters | Baud mismatch or wrong `CLK_FREQ` (must match the PLL output, 62.5 MHz) |
 | Timing not met | Lower the PLL frequency in `pll_150.v`, re-run `timing.tcl` |
 | Fit fails on M10K | ROM depth exceeds 556 KB; reduce the model or use INT4 |

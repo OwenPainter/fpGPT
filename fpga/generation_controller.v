@@ -44,7 +44,8 @@ module generation_controller #(
     parameter ROM_MEM_FILE = "weights_unified.hex",
 
     parameter GEN_TOKENS   = 16,
-    parameter TOP_K        = 4
+    parameter TOP_K        = 4,
+    parameter NUM_PES      = 1
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -103,7 +104,7 @@ module generation_controller #(
         .Q_SHIFT(Q_SHIFT), .K_SHIFT(K_SHIFT), .V_SHIFT(V_SHIFT),
         .OUT_SHIFT(OUT_SHIFT), .SCORE_MULT(SCORE_MULT), .SCORE_SHIFT(SCORE_SHIFT),
         .LN_SHIFT(LN_SHIFT), .FC1_SHIFT(FC1_SHIFT), .FC2_SHIFT(FC2_SHIFT),
-        .LM_SHIFT(LM_SHIFT), .W_ADDR_WIDTH(W_ADDR_WIDTH)
+        .LM_SHIFT(LM_SHIFT), .W_ADDR_WIDTH(W_ADDR_WIDTH), .NUM_PES(NUM_PES)
     ) engine (
         .clk(clk), .rst_n(rst_n),
         .start(eng_start), .seq_len(seq_len), .cache_len(cache_len),

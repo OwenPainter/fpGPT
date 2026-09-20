@@ -1,11 +1,14 @@
 `timescale 1ns/10ps
 
 // ═══════════════════════════════════════════════════════════════
-// fpGPT — 50 MHz -> 150 MHz system PLL (Cyclone V)
+// fpGPT — 50 MHz -> 66.67 MHz system PLL (Cyclone V)
 //
 // Thin wrapper around the Quartus `altera_pll` primitive (the same form the
 // IP Catalog emits). It is only instantiated when FPGPT_USE_PLL is defined
 // (see fpga/fpGPT.qsf), so RTL simulation can bypass it.
+//
+// The output frequency is set to the timing-closed operating point
+// (~73.5 MHz Fmax); the FSM closes with margin at 66.67 MHz.
 //
 // Ports match the generated IP interface: refclk / rst / outclk_0 / locked.
 // ═══════════════════════════════════════════════════════════════
@@ -13,7 +16,7 @@
 module pll_150 (
     input  wire refclk,   // 50 MHz from CLOCK_50
     input  wire rst,      // active-high reset
-    output wire outclk_0, // 150 MHz system clock
+    output wire outclk_0, // 66.67 MHz system clock
     output wire locked
 );
 
@@ -22,7 +25,7 @@ module pll_150 (
         .reference_clock_frequency("50.0 MHz"),
         .operation_mode("direct"),
         .number_of_clocks(1),
-        .output_clock_frequency0("150.000000 MHz"),
+        .output_clock_frequency0("62.500000 MHz"),
         .phase_shift0("0 ps"),
         .duty_cycle0(50),
         .output_clock_frequency1("0 MHz"),

@@ -216,7 +216,8 @@ def _write_weight_rom(ir, filepath: str):
 def _write_board_params(ir, ir_engine, filepath: str,
                         rom_mem_file: str = "weights_unified.hex",
                         gen_tokens: int = 16,
-                        sys_clk_hz: int = 150000000,
+                        num_pes: int = 4,
+                        sys_clk_hz: int = 62500000,
                         baud_rate: int = 115200):
     """Generate the board parameter header consumed by fpga/fpga_top.v.
 
@@ -256,7 +257,8 @@ def _write_board_params(ir, ir_engine, filepath: str,
         f.write(f"`define FPGPT_ROM_MEM_FILE    \"{rom_mem_file}\"\n\n")
 
         f.write("// ── Decode configuration ──\n")
-        f.write(f"`define FPGPT_GEN_TOKENS      {gen_tokens}\n\n")
+        f.write(f"`define FPGPT_GEN_TOKENS      {gen_tokens}\n")
+        f.write(f"`define FPGPT_NUM_PES         {num_pes}\n\n")
 
         f.write("// ── Fixed-point shifts (layer 0; engine uses one global value) ──\n")
         f.write(f"`define FPGPT_Q_SHIFT         {shift(first.attention.q_proj)}\n")

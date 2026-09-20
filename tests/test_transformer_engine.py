@@ -155,7 +155,8 @@ class GPTControllerTests(unittest.TestCase):
         return image
 
     def simulate(self, model, tokens, dim, heads, length, layers, d_ff, vocab,
-                 shifts=(0, 0, 0, 0), mult=64, score_shift=8, ln_shift=7):
+                 shifts=(0, 0, 0, 0), mult=64, score_shift=8, ln_shift=7,
+                 num_pes=1):
         expected = self.reference(model, tokens, dim, heads, d_ff, shifts, mult,
                                   score_shift, ln_shift)
         image = self.rom_image(model, dim, length, vocab, d_ff)
@@ -201,7 +202,7 @@ transformer_engine #(
     .Q_SHIFT({shifts[0]}), .K_SHIFT({shifts[1]}), .V_SHIFT({shifts[2]}),
     .OUT_SHIFT({shifts[3]}), .SCORE_MULT({mult}), .SCORE_SHIFT({score_shift}),
     .LN_SHIFT({ln_shift}), .FC1_SHIFT(0), .FC2_SHIFT(0), .LM_SHIFT(0),
-    .W_ADDR_WIDTH({w_addr_width})
+    .W_ADDR_WIDTH({w_addr_width}), .NUM_PES({num_pes})
 ) dut(.*);
 
 initial begin
@@ -230,7 +231,7 @@ endmodule
             tb_path.write_text(tb)
             output = tmp / "sim"
             files = ["transformer_engine.v", "attention.v", "layer_norm.v", "dense_layer.v",
-                     "mac_unit.v", "activation.v"]
+                     "mac_unit.v", "activation.v", "weight_cache.v"]
             result = subprocess.run(
                 ["iverilog", "-g2012", "-s", "tb", "-o", str(output)]
                 + [str(ROOT / "hdl" / f) for f in files] + [str(tb_path)],
@@ -269,6 +270,172 @@ endmodule
         model = self.build_model(rng, dim=6, heads=2, length=3, layers=1, d_ff=6, vocab=5,
                                  shifts=(0, 0, 0, 0))
         self.simulate(model, tokens, dim=6, heads=2, length=3, layers=1, d_ff=6, vocab=5)
+
+    @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
+                         "requires Icarus Verilog")
+    def test_packed_pe_array_matches_scalar(self):
+        # The resident MLP caches must reproduce the scalar result bit-exactly
+        # for every PE-array width, including the packed read path.
+        rng = random.Random(0x0FE5)
+        tokens = [1, 2, 3]
+        for num_pes in (1, 2, 4, 8):
+            with self.subTest(num_pes=num_pes):
+                model = self.build_model(rng, dim=8, heads=2, length=3, layers=2,
+                                         d_ff=8, vocab=8, shifts=(0, 0, 0, 0))
+                self.simulate(model, tokens, dim=8, heads=2, length=3, layers=2,
+                              d_ff=8, vocab=8, num_pes=num_pes)
+
+
+class PackedWeightBusTests(unittest.TestCase):
+    """Packed NUM_PES-wide weight bus contract shared with hdl/dense_layer.v.
+
+    gather=1 (weights): read raddr = j_base*IN_FEATURES + i returns, little
+    endian, byte k = W[j_base + k][i].
+    gather=0 (biases):  read raddr = j_base returns byte k = b[j_base + k].
+    """
+    P = 4
+    IN = 4
+    OUT = 8
+    WB = OUT * IN
+
+    def _weight_cases(self, w):
+        return [(jb * self.IN + i,
+                 [w[(jb + k) * self.IN + i] for k in range(self.P)])
+                for jb in range(0, self.OUT, self.P) for i in range(self.IN)]
+
+    def _bias_cases(self, b):
+        return [(jb, [b[jb + k] for k in range(self.P)])
+                for jb in range(0, self.OUT, self.P)]
+
+    @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
+                         "requires Icarus Verilog")
+    def test_rom_sync_weight_gather(self):
+        w = [(f * 7 + 3) & 0xFF for f in range(self.WB)]
+        cases = self._weight_cases(w)
+        aw = max(1, (self.WB - 1).bit_length())
+        checks = []
+        for ci, (addr, exp) in enumerate(cases):
+            checks.append(f"addr_list[{ci}]={addr};")
+            for k, v in enumerate(exp):
+                checks.append(f"expected[{ci*self.P+k}]={v};")
+        tb = f'''
+module tb;
+reg clk=0; always #5 clk=~clk;
+reg [{aw-1}:0] addr=0;
+reg [{aw-1}:0] addr_list [0:{len(cases)-1}];
+integer expected [0:{len(cases)*self.P-1}];
+integer ci, k;
+wire signed [{self.P*8-1}:0] data;
+rom_sync #(.DATA_WIDTH(8), .NUM_PES({self.P}), .IN_FEATURES({self.IN}),
+ .ADDR_WIDTH({aw}), .DEPTH({self.WB}), .MEM_FILE("w.hex"))
+ dut(.clk(clk), .addr(addr), .data(data));
+initial begin
+    {chr(10).join(checks)}
+    for (ci = 0; ci < {len(cases)}; ci = ci + 1) begin
+        @(negedge clk); addr = addr_list[ci];
+        @(posedge clk); #1;
+        for (k = 0; k < {self.P}; k = k + 1)
+            if (data[k*8 +: 8] !== expected[ci*{self.P}+k])
+                $fatal(1, "rom ci=%0d k=%0d got %0d exp %0d", ci, k, data[k*8 +: 8], expected[ci*{self.P}+k]);
+    end
+    $display("PASS"); $finish;
+end
+initial begin #200000; $fatal(1,"timeout"); end
+endmodule
+'''
+        with tempfile.TemporaryDirectory(prefix="fpgpt-packed-") as tmp:
+            tmp = pathlib.Path(tmp)
+            (tmp / "w.hex").write_text("\n".join(f"{v:02X}" for v in w) + "\n")
+            (tmp / "tb.v").write_text(tb)
+            out = tmp / "sim"
+            result = subprocess.run(
+                ["iverilog", "-g2012", "-s", "tb", "-o", str(out),
+                 str(ROOT / "hdl" / "rom_sync.v"), str(tmp / "tb.v")],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run(["vvp", str(out)], capture_output=True, text=True,
+                                    timeout=30, cwd=tmp)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("PASS", result.stdout)
+
+    @unittest.skipUnless(shutil.which("iverilog") and shutil.which("vvp"),
+                         "requires Icarus Verilog")
+    def test_weight_cache_both_gathers(self):
+        # The tb fills weight byte f with f and bias j with j+0x20.
+        w = [f & 0xFF for f in range(self.WB)]
+        b = [(j + 0x20) & 0xFF for j in range(self.OUT)]
+        wcases = self._weight_cases(w)
+        bcases = self._bias_cases(b)
+        aw = max(1, (self.WB - 1).bit_length())
+        checks = []
+        for ci, (addr, exp) in enumerate(wcases):
+            checks.append(f"w_addr_list[{ci}]={addr};")
+            for k, v in enumerate(exp):
+                checks.append(f"w_expected[{ci*self.P+k}]={v};")
+        for ci, (addr, exp) in enumerate(bcases):
+            checks.append(f"b_addr_list[{ci}]={addr};")
+            for k, v in enumerate(exp):
+                checks.append(f"b_expected[{ci*self.P+k}]={v};")
+        tb = f'''
+module tb;
+reg clk=0; always #5 clk=~clk;
+reg we_w=0, we_b=0;
+reg [{aw-1}:0] waddr=0, baddr=0, raddr=0;
+reg signed [7:0] wdata=0, bdata=0;
+reg gather=1;
+reg [{aw-1}:0] w_addr_list [0:{len(wcases)-1}];
+reg [{aw-1}:0] b_addr_list [0:{len(bcases)-1}];
+integer w_expected [0:{len(wcases)*self.P-1}];
+integer b_expected [0:{len(bcases)*self.P-1}];
+integer ci, k, f;
+wire signed [{self.P*8-1}:0] rdata;
+weight_cache #(.DATA_WIDTH(8), .NUM_PES({self.P}), .IN_FEATURES({self.IN}),
+ .OUT_ROWS({self.OUT}), .ADDR_WIDTH({aw}))
+ dut(.clk(clk), .we_w(we_w), .waddr(waddr), .wdata(wdata),
+     .we_b(we_b), .baddr(baddr), .bdata(bdata),
+     .raddr(raddr), .gather(gather), .rdata(rdata));
+initial begin
+    {chr(10).join(checks)}
+    for (f = 0; f < {self.WB}; f = f + 1) begin
+        @(negedge clk); we_w = 1; waddr = f[{aw-1}:0]; wdata = f;
+    end
+    @(negedge clk); we_w = 0;
+    for (f = 0; f < {self.OUT}; f = f + 1) begin
+        @(negedge clk); we_b = 1; baddr = f[{aw-1}:0]; bdata = f + 8'h20;
+    end
+    @(negedge clk); we_b = 0;
+    for (ci = 0; ci < {len(wcases)}; ci = ci + 1) begin
+        @(negedge clk); raddr = w_addr_list[ci]; gather = 1;
+        @(posedge clk); #1;
+        for (k = 0; k < {self.P}; k = k + 1)
+            if (rdata[k*8 +: 8] !== w_expected[ci*{self.P}+k])
+                $fatal(1, "wcache ci=%0d k=%0d got %0d exp %0d", ci, k, rdata[k*8 +: 8], w_expected[ci*{self.P}+k]);
+    end
+    for (ci = 0; ci < {len(bcases)}; ci = ci + 1) begin
+        @(negedge clk); raddr = b_addr_list[ci]; gather = 0;
+        @(posedge clk); #1;
+        for (k = 0; k < {self.P}; k = k + 1)
+            if (rdata[k*8 +: 8] !== b_expected[ci*{self.P}+k])
+                $fatal(1, "bcache ci=%0d k=%0d got %0d exp %0d", ci, k, rdata[k*8 +: 8], b_expected[ci*{self.P}+k]);
+    end
+    $display("PASS"); $finish;
+end
+initial begin #200000; $fatal(1,"timeout"); end
+endmodule
+'''
+        with tempfile.TemporaryDirectory(prefix="fpgpt-packed-") as tmp:
+            tmp = pathlib.Path(tmp)
+            (tmp / "tb.v").write_text(tb)
+            out = tmp / "sim"
+            result = subprocess.run(
+                ["iverilog", "-g2012", "-s", "tb", "-o", str(out),
+                 str(ROOT / "hdl" / "weight_cache.v"), str(tmp / "tb.v")],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run(["vvp", str(out)], capture_output=True, text=True,
+                                    timeout=30, cwd=tmp)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("PASS", result.stdout)
 
 
 if __name__ == "__main__":

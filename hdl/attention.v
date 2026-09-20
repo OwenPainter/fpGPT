@@ -1,5 +1,10 @@
 // Sequential causal multi-head self-attention, including Q/K/V/out projections.
 // See hdl/attention.md for the loading protocol and fixed-point contract.
+//
+// All matrix storage is written as simple dual-port block RAM so Quartus can
+// infer M10K: one registered write port and one registered read port per
+// memory. The FSM already consumes operands one cycle after issuing the read
+// address, so the RAM's registered output matches the original timing.
 module attention #(
     parameter DATA_WIDTH = 8,
     parameter D_MODEL = 64,
@@ -40,6 +45,9 @@ module attention #(
     output reg signed [DATA_WIDTH-1:0] y_data
 );
     localparam HEAD_DIM = D_MODEL / NUM_HEADS;
+    localparam KV_DEPTH = NUM_LAYERS * MAX_SEQ_LEN * D_MODEL;
+    localparam KV_AW = (KV_DEPTH <= 1) ? 1 : $clog2(KV_DEPTH);
+    localparam SC_AW = (MAX_SEQ_LEN <= 1) ? 1 : $clog2(MAX_SEQ_LEN);
     // synthesis translate_off
     initial begin
         if (D_MODEL < 1 || NUM_HEADS < 1 || D_MODEL % NUM_HEADS != 0 || MAX_SEQ_LEN < 1)
@@ -53,27 +61,30 @@ module attention #(
     // synthesis translate_on
     localparam IDLE=0, PROJ_READ=1, PROJ_MAC=2, PROJ_SAVE=3,
                SCORE_READ=4, SCORE_MAC=5, SCORE_SAVE=6,
-               EXP=7, VALUE_READ=8, VALUE_MAC=9, VALUE_SAVE=10,
-               FINISH=11;
+               EXP_READ=7, EXP=8, VALUE_READ=9, VALUE_MAC=10, VALUE_SAVE=11,
+               VALUE_DIV=12, FINISH=13;
     reg [3:0] state;
-    reg signed [DATA_WIDTH-1:0] inputs [0:MAX_SEQ_LEN*D_MODEL-1];
-    reg signed [DATA_WIDTH-1:0] weights [0:4*D_MODEL*D_MODEL-1];
+
+    // ── Matrix storage: simple dual-port, M10K-inferable ──
+    (* ramstyle = "M10K" *) reg signed [DATA_WIDTH-1:0] inputs [0:MAX_SEQ_LEN*D_MODEL-1];
+    (* ramstyle = "M10K" *) reg signed [DATA_WIDTH-1:0] weights [0:4*D_MODEL*D_MODEL-1];
     reg signed [63:0] biases [0:4*D_MODEL-1];
-    reg signed [DATA_WIDTH-1:0] queries [0:MAX_SEQ_LEN*D_MODEL-1];
-    reg signed [DATA_WIDTH-1:0] k_cache [0:NUM_LAYERS*MAX_SEQ_LEN*D_MODEL-1];
-    reg signed [DATA_WIDTH-1:0] v_cache [0:NUM_LAYERS*MAX_SEQ_LEN*D_MODEL-1];
-    reg signed [DATA_WIDTH-1:0] context_data [0:MAX_SEQ_LEN*D_MODEL-1];
+    (* ramstyle = "M10K" *) reg signed [DATA_WIDTH-1:0] queries [0:MAX_SEQ_LEN*D_MODEL-1];
+    (* ramstyle = "M10K" *) reg signed [DATA_WIDTH-1:0] k_cache [0:KV_DEPTH-1];
+    (* ramstyle = "M10K" *) reg signed [DATA_WIDTH-1:0] v_cache [0:KV_DEPTH-1];
+    (* ramstyle = "M10K" *) reg signed [DATA_WIDTH-1:0] context_data [0:MAX_SEQ_LEN*D_MODEL-1];
     reg signed [63:0] scores [0:MAX_SEQ_LEN-1];
     reg [15:0] exponentials [0:MAX_SEQ_LEN-1];
-    integer length, projection, token, row, col, head, key_index, component;
-    reg signed [DATA_WIDTH-1:0] operand_a, operand_b;
-    wire signed [2*DATA_WIDTH-1:0] product = operand_a * operand_b;
-    reg signed [63:0] accumulator, max_score;
-    wire signed [63:0] scaled_score = (accumulator * SCORE_MULT) >>> SCORE_SHIFT;
-    wire signed [63:0] delta = max_score - scores[key_index];
+
+    // Registered read data
+    reg signed [DATA_WIDTH-1:0] inputs_q, weights_q, queries_q, kcache_q,
+                                vcache_q, context_q;
+    reg signed [63:0] bias_q, scores_q;
     reg [15:0] exp_operand;
+
+    integer length, projection, token, row, col, head, key_index, component;
+    reg signed [63:0] accumulator, max_score;
     reg signed [63:0] denominator;
-    wire signed [DATA_WIDTH+16:0] weighted_value = operand_a * $signed({1'b0, exp_operand});
     integer projection_shift;
     always @(*) begin
         case (projection)
@@ -125,26 +136,123 @@ module attention #(
         end
     endfunction
 
-    // Registered reads keep the matrix memories compatible with synchronous RAM.
+    // ── Read addresses (presented one cycle before the data is consumed) ──
+    wire [X_ADDR_WIDTH-1:0] input_raddr   = token*D_MODEL + col;
+    wire [W_ADDR_WIDTH-1:0] weight_raddr  = projection*D_MODEL*D_MODEL + row*D_MODEL + col;
+    wire [X_ADDR_WIDTH-1:0] query_raddr   = token*D_MODEL + head*HEAD_DIM + component;
+    wire [KV_AW-1:0]        kcache_raddr  = layer_idx*MAX_SEQ_LEN*D_MODEL + key_index*D_MODEL + head*HEAD_DIM + component;
+    wire [KV_AW-1:0]        vcache_raddr  = kcache_raddr;
+    wire [X_ADDR_WIDTH-1:0] context_raddr = token*D_MODEL + col;
+    wire [B_ADDR_WIDTH-1:0] bias_raddr    = projection*D_MODEL + row;
+    wire [SC_AW-1:0]        scores_raddr  = (state == EXP && key_index < token) ? (key_index + 1)
+                                          : key_index;
+
+    // ── Write ports (one write + one registered read per memory) ──
+    wire load_en = !busy && rst_n;
+    wire inputs_we  = load_en && x_load && (x_load_addr < MAX_SEQ_LEN*D_MODEL);
+    wire weights_we = load_en && w_load && (w_load_addr < 4*D_MODEL*D_MODEL);
+    wire biases_we  = load_en && b_load && (b_load_addr < 4*D_MODEL);
+
+    // ── Sequential divider for the value normalization (accumulator/denominator) ──
+    reg              div_start;
+    reg signed [63:0] div_num, div_den;
+    reg              div_busy;
+    reg [64:0]       div_rem;
+    reg [63:0]       div_q, div_ua, div_ub;
+    reg              div_neg;
+    reg [6:0]        div_cnt;
+    wire signed [63:0] div_quot = div_neg ? -div_q : div_q;
+    wire             div_done = div_busy && (div_cnt == 0);
+    wire [64:0]      div_shift = {div_rem[63:0], div_ua[63]};
+    wire [64:0]      div_ubx   = {1'b0, div_ub};
+    wire             div_ge    = (div_shift >= div_ubx);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            div_busy <= 1'b0; div_cnt <= 0; div_rem <= 0; div_q <= 0;
+            div_ua <= 0; div_ub <= 0; div_neg <= 1'b0;
+        end else if (div_start) begin
+            div_neg  <= div_num < 0;
+            div_ua   <= div_num < 0 ? -div_num : div_num;
+            div_ub   <= div_den;
+            div_rem  <= 0;
+            div_q    <= 0;
+            div_cnt  <= 64;
+            div_busy <= 1'b1;
+        end else if (div_busy) begin
+            if (div_cnt != 0) begin
+                div_rem <= div_ge ? (div_shift - div_ubx) : div_shift;
+                div_q   <= div_ge ? {div_q[62:0], 1'b1} : {div_q[62:0], 1'b0};
+                div_ua  <= {div_ua[62:0], 1'b0};
+                div_cnt <= div_cnt - 1'b1;
+            end else begin
+                div_busy <= 1'b0;
+            end
+        end
+    end
+
+    wire signed [63:0] proj_sum  = accumulator + bias_q;
+    wire signed [DATA_WIDTH-1:0] proj_wdata = saturate(requant(proj_sum, projection_shift));
+    wire proj_save = (state == PROJ_SAVE);
+    wire queries_we = proj_save && (projection == 0);
+    wire kcache_we  = proj_save && (projection == 1);
+    wire vcache_we  = proj_save && (projection == 2);
+    wire context_we = (state == VALUE_DIV) && div_done;
+    wire signed [DATA_WIDTH-1:0] context_wdata = saturate(div_quot);
+
+    wire signed [63:0] scaled_score = (accumulator * SCORE_MULT) >>> SCORE_SHIFT;
+    wire signed [63:0] delta = max_score - scores_q;
+    wire signed [DATA_WIDTH+16:0] weighted_value = vcache_q * $signed({1'b0, exp_operand});
+
     always @(posedge clk) begin
-        if (!busy && rst_n) begin
-            if (x_load && x_load_addr < MAX_SEQ_LEN*D_MODEL) inputs[x_load_addr] <= x_load_data;
-            if (w_load && w_load_addr < 4*D_MODEL*D_MODEL) weights[w_load_addr] <= w_load_data;
-            if (b_load && b_load_addr < 4*D_MODEL) biases[b_load_addr] <= b_load_data;
-        end
-        if (state == PROJ_READ) begin
-            if (projection == 3) operand_a <= context_data[token*D_MODEL+col];
-            else operand_a <= inputs[token*D_MODEL+col];
-            operand_b <= weights[projection*D_MODEL*D_MODEL+row*D_MODEL+col];
-        end
-        if (state == SCORE_READ) begin
-            operand_a <= queries[token*D_MODEL+head*HEAD_DIM+component];
-            operand_b <= k_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + key_index*D_MODEL+head*HEAD_DIM+component];
-        end
-        if (state == VALUE_READ) begin
-            operand_a <= v_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + key_index*D_MODEL+head*HEAD_DIM+component];
-            exp_operand <= exponentials[key_index];
-        end
+        if (inputs_we) inputs[x_load_addr] <= x_load_data;
+        inputs_q <= inputs[input_raddr];
+    end
+    always @(posedge clk) begin
+        if (weights_we) weights[w_load_addr] <= w_load_data;
+        weights_q <= weights[weight_raddr];
+    end
+    always @(posedge clk) begin
+        if (biases_we) biases[b_load_addr] <= b_load_data;
+        bias_q <= biases[bias_raddr];
+    end
+    always @(posedge clk) begin
+        if (queries_we) queries[token*D_MODEL+row] <= proj_wdata;
+        queries_q <= queries[query_raddr];
+    end
+    always @(posedge clk) begin
+        if (kcache_we) k_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + token*D_MODEL+row] <= proj_wdata;
+        kcache_q <= k_cache[kcache_raddr];
+    end
+    always @(posedge clk) begin
+        if (vcache_we) v_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + token*D_MODEL+row] <= proj_wdata;
+        vcache_q <= v_cache[vcache_raddr];
+    end
+    always @(posedge clk) begin
+        if (context_we) context_data[token*D_MODEL+head*HEAD_DIM+component] <= context_wdata;
+        context_q <= context_data[context_raddr];
+    end
+    always @(posedge clk) begin
+        if (state == SCORE_SAVE) scores[key_index] <= scaled_score;
+        scores_q <= scores[scores_raddr];
+    end
+    always @(posedge clk) begin
+        if (state == EXP) exponentials[key_index] <= exp_lut(delta);
+        exp_operand <= exponentials[key_index];
+    end
+
+    // ── Operand selection for the MAC states ──
+    wire signed [DATA_WIDTH-1:0] proj_a = (projection == 3) ? context_q : inputs_q;
+    wire signed [DATA_WIDTH-1:0] proj_b = weights_q;
+    wire signed [DATA_WIDTH-1:0] score_a = queries_q;
+    wire signed [DATA_WIDTH-1:0] score_b = kcache_q;
+    reg signed [2*DATA_WIDTH-1:0] product;
+    always @(*) begin
+        case (state)
+            PROJ_MAC:  product = proj_a * proj_b;
+            SCORE_MAC: product = score_a * score_b;
+            default:   product = {2*DATA_WIDTH{1'b0}};
+        endcase
     end
 
     always @(posedge clk or negedge rst_n) begin
@@ -154,6 +262,7 @@ module attention #(
             length <= 0; projection <= 0; token <= 0; row <= 0; col <= 0;
             head <= 0; key_index <= 0; component <= 0;
             accumulator <= 0; max_score <= 0; denominator <= 0;
+            div_start <= 1'b0; div_num <= 0; div_den <= 0;
         end else begin
             done <= 0; y_valid <= 0;
             case (state)
@@ -175,11 +284,11 @@ module attention #(
                 end
                 PROJ_SAVE: begin
                     case (projection)
-                        0: queries[token*D_MODEL+row] <= saturate(requant(accumulator+biases[row], projection_shift));
-                        1: k_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + token*D_MODEL+row] <= saturate(requant(accumulator+biases[D_MODEL+row], projection_shift));
-                        2: v_cache[layer_idx*MAX_SEQ_LEN*D_MODEL + token*D_MODEL+row] <= saturate(requant(accumulator+biases[2*D_MODEL+row], projection_shift));
+                        0: ; // queries write handled by the memory port
+                        1: ; // k_cache write handled by the memory port
+                        2: ; // v_cache write handled by the memory port
                         3: begin
-                            y_data <= saturate(requant(accumulator+biases[3*D_MODEL+row], projection_shift));
+                            y_data <= proj_wdata;
                             y_addr <= token*D_MODEL+row; y_valid <= 1;
                         end
                     endcase
@@ -206,16 +315,15 @@ module attention #(
                     else begin component <= component+1; state <= SCORE_READ; end
                 end
                 SCORE_SAVE: begin
-                    scores[key_index] <= scaled_score;
                     if (key_index == 0 || scaled_score > max_score) max_score <= scaled_score;
                     accumulator <= 0; component <= 0;
                     // Future keys are never read: the causal mask is implicit.
                     if (key_index == token) begin
-                        key_index <= 0; denominator <= 0; state <= EXP;
+                        key_index <= 0; denominator <= 0; state <= EXP_READ;
                     end else begin key_index <= key_index+1; state <= SCORE_READ; end
                 end
+                EXP_READ: state <= EXP;
                 EXP: begin
-                    exponentials[key_index] <= exp_lut(delta);
                     denominator <= denominator + exp_lut(delta);
                     if (key_index == token) begin key_index <= 0; state <= VALUE_READ; end
                     else key_index <= key_index+1;
@@ -228,17 +336,25 @@ module attention #(
                 end
                 VALUE_SAVE: begin
                     // Normalize once per output, avoiding rounded probability vectors.
-                    context_data[token*D_MODEL+head*HEAD_DIM+component] <= saturate(accumulator / denominator);
-                    accumulator <= 0; key_index <= 0;
-                    if (component != HEAD_DIM-1) begin component <= component+1; state <= VALUE_READ; end
-                    else begin
-                        component <= 0; state <= SCORE_READ;
-                        if (head != NUM_HEADS-1) head <= head+1;
+                    div_num <= accumulator;
+                    div_den <= denominator;
+                    div_start <= 1'b1;
+                    state <= VALUE_DIV;
+                end
+                VALUE_DIV: begin
+                    div_start <= 1'b0;
+                    if (div_done) begin
+                        accumulator <= 0; key_index <= 0;
+                        if (component != HEAD_DIM-1) begin component <= component+1; state <= VALUE_READ; end
                         else begin
-                            head <= 0;
-                            if (token != length-1) token <= token+1;
+                            component <= 0; state <= SCORE_READ;
+                            if (head != NUM_HEADS-1) head <= head+1;
                             else begin
-                                projection <= 3; token <= cache_len; row <= 0; col <= 0; state <= PROJ_READ;
+                                head <= 0;
+                                if (token != length-1) token <= token+1;
+                                else begin
+                                    projection <= 3; token <= cache_len; row <= 0; col <= 0; state <= PROJ_READ;
+                                end
                             end
                         end
                     end

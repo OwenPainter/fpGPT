@@ -5,3 +5,11 @@ checkpoints/
 build/
 *.pt
 obj_dir/
+
+# Quartus build artifacts
+fpga/output_files/
+fpga/db/
+fpga/incremental_db/
+fpga/*.qdf
+fpga/c5_pin_model_dump.txt
+fpga/weights_unified.hex

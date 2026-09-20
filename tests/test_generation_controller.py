@@ -116,7 +116,7 @@ endmodule
             tb_path.write_text(tb)
             output = tmp / "sim"
             files = ["generation_controller.v", "transformer_engine.v", "attention.v",
-                     "layer_norm.v", "dense_layer.v", "mac_unit.v", "activation.v",
+                     "layer_norm.v", "dense_layer.v", "mac_unit.v", "activation.v", "weight_cache.v",
                      "rom_sync.v"]
             result = subprocess.run(
                 ["iverilog", "-g2012", "-s", "tb", "-o", str(output)]

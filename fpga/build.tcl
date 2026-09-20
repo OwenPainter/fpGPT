@@ -33,7 +33,7 @@ proc sync_generated {} {
     }
 }
 
-# Emit an all-zero ROM image sized to BOARD_ROM_DEPTH so the MIF_FILE
+# Emit an all-zero ROM image sized to FPGPT_ROM_DEPTH so the MIF_FILE
 # assignment and $readmemh always resolve. The model then emits '.' only.
 proc write_zero_rom {} {
     set depth 0
@@ -41,10 +41,10 @@ proc write_zero_rom {} {
         set fh [open "board_params.vh" r]
         set text [read $fh]
         close $fh
-        regexp {BOARD_ROM_DEPTH\s*=\s*(\d+)} $text -> depth
+        regexp {FPGPT_ROM_DEPTH\s*=\s*(\d+)} $text -> depth
     }
     if {$depth <= 0} {
-        puts "\[build\] WARNING: could not read BOARD_ROM_DEPTH; writing empty ROM"
+        puts "\[build\] WARNING: could not read FPGPT_ROM_DEPTH; writing empty ROM"
         set depth 1
     }
     set fh [open "weights_unified.hex" w]

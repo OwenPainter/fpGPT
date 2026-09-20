@@ -33,6 +33,7 @@
     `define FPGPT_ROM_DEPTH      4096
     `define FPGPT_ROM_MEM_FILE   "no_such_file.hex"
     `define FPGPT_GEN_TOKENS     1
+    `define FPGPT_NUM_PES        1
     `define FPGPT_Q_SHIFT        0
     `define FPGPT_K_SHIFT        0
     `define FPGPT_V_SHIFT        0
@@ -52,6 +53,7 @@
 module fpga_top #(
     parameter ROM_MEM_FILE = `FPGPT_ROM_MEM_FILE,
     parameter GEN_TOKENS   = `FPGPT_GEN_TOKENS,
+    parameter NUM_PES      = `FPGPT_NUM_PES,
     parameter TOP_K        = 4,
     parameter CLK_FREQ     = `FPGPT_SYS_CLK_HZ,
     parameter BAUD_RATE    = `FPGPT_BAUD_RATE,
@@ -129,7 +131,8 @@ module fpga_top #(
         .ROM_DEPTH(`FPGPT_ROM_DEPTH),
         .ROM_MEM_FILE(ROM_MEM_FILE),
         .GEN_TOKENS(GEN_TOKENS),
-        .TOP_K(TOP_K)
+        .TOP_K(TOP_K),
+        .NUM_PES(NUM_PES)
     ) controller_inst (
         .clk(clk_sys),
         .rst_n(rst_n),

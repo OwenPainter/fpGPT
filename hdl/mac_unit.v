@@ -23,20 +23,29 @@ module mac_unit #(
     output reg  signed [ACC_WIDTH-1:0]   accumulator // Running sum
 );
 
-    // ── Pipeline stage 1: Multiply ──
-    // Use full-width product to avoid overflow in the multiplier itself
-    wire signed [2*DATA_WIDTH-1:0] product;
-    assign product = weight * activation;
+    // ── Pipeline stage 1: register the product ──
+    // The product register maps into the DSP block's output register, which
+    // keeps the multiplier off the accumulator's timing path.
+    reg signed [2*DATA_WIDTH-1:0] product_reg;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            product_reg <= {2*DATA_WIDTH{1'b0}};
+        end else if (clear) begin
+            product_reg <= {2*DATA_WIDTH{1'b0}};
+        end else if (enable) begin
+            product_reg <= weight * activation;
+        end
+    end
 
-    // ── Pipeline stage 2: Accumulate ──
+    // ── Pipeline stage 2: accumulate the registered product ──
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             accumulator <= {ACC_WIDTH{1'b0}};
         end else if (clear) begin
             accumulator <= {ACC_WIDTH{1'b0}};
         end else if (enable) begin
-            // Sign-extend the product to accumulator width before adding
-            accumulator <= accumulator + {{(ACC_WIDTH-2*DATA_WIDTH){product[2*DATA_WIDTH-1]}}, product};
+            // Sign-extend the registered product to accumulator width
+            accumulator <= accumulator + {{(ACC_WIDTH-2*DATA_WIDTH){product_reg[2*DATA_WIDTH-1]}}, product_reg};
         end
     end
 
