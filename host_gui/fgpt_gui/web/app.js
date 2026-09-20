@@ -118,8 +118,12 @@ function handleEvent(event) {
 }
 
 function applyConfig(config) {
-  badge("badge-transport", "transport: " + config.transport
-    + (config.mock_style ? " (" + config.mock_style + ")" : ""));
+  if (config.transport === "slm") {
+    badge("badge-transport", "SLM: " + (config.slm_engine || "MicroGPT") + " (Local CPU)");
+  } else {
+    badge("badge-transport", "transport: " + config.transport
+      + (config.mock_style ? " (" + config.mock_style + ")" : ""));
+  }
   badge("badge-mode", "mode: " + config.mode);
   state.genTokens = config.gen_tokens;
   if (config.params) applyParams(config.params);
@@ -273,14 +277,20 @@ function selectFoodFile(file) {
 function foodScoreHtml(result) {
   const pct = Math.round(result.probability * 1000) / 10;
   const conf = Math.round(result.confidence * 1000) / 10;
+  const icon = result.is_hotdog ? "\ud83c\udf2d " : "\u274c ";
+  const timeStr = result.inference_ms ? ` &middot; ${result.inference_ms}ms` : "";
   return `
     <div class="verdict">
-      <span class="label">${result.label}</span>
+      <span class="label">${icon}${result.label}</span>
       <span class="score">${conf}% confident</span>
     </div>
     <div class="bar"><span style="width:${pct}%"></span></div>
-    <div class="note">P(hot dog) = ${result.probability.toFixed(4)}
-      &middot; threshold ${result.threshold} &middot; ${result.model}</div>`;
+    <div class="note">P(hot dog) = ${result.probability.toFixed(4)}${timeStr} &middot; threshold ${result.threshold} &middot; ${result.model}</div>
+    <div style="margin-top: 0.8rem; text-align: right;">
+      <button type="button" class="secondary" id="ask-food-ai" style="font-size:0.8rem; padding:0.35rem 0.75rem;">
+        \ud83d\udcac Ask AI about this result
+      </button>
+    </div>`;
 }
 
 async function classifyFood() {
@@ -299,6 +309,14 @@ async function classifyFood() {
       setFoodResult("Error: " + (data.error || "classification failed"), "error");
     } else {
       setFoodResult(foodScoreHtml(data), data.is_hotdog ? "hotdog" : "nothotdog");
+      const askBtn = el("ask-food-ai");
+      if (askBtn) {
+        askBtn.addEventListener("click", () => {
+          el("tab-chat").click();
+          promptBox.value = `I just ran a photo through the SeeFood classifier and it resulted in: ${data.label} (${Math.round(data.confidence * 100)}% confidence). What do you think?`;
+          sendPrompt();
+        });
+      }
     }
   } catch (err) {
     setFoodResult("Request failed: " + err, "error");
@@ -366,6 +384,23 @@ function init() {
       sendPrompt();
     }
   });
+  const shutdownBtn = el("btn-shutdown");
+  if (shutdownBtn) {
+    shutdownBtn.addEventListener("click", async () => {
+      if (!confirm("Are you sure you want to stop the local fpGPT server?")) return;
+      try {
+        await fetch("/api/shutdown", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        alert("Server has been stopped cleanly. You can close this browser tab.");
+        setConnected(false);
+      } catch (err) {
+        alert("Server shutdown requested: " + err);
+      }
+    });
+  }
   setupTabs();
   setupFood();
   countInvalid();

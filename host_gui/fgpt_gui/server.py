@@ -71,6 +71,7 @@ class GuiHTTPServer(ThreadingHTTPServer):
             "gen_tokens": self.session.gen_tokens,
             "timeout_s": self.config.timeout_s,
             "mock_style": self.config.mock_style,
+            "slm_engine": getattr(self.config, "slm_engine", "microgpt"),
             "board_params_source": self.params.source,
             "warnings": self.warnings,
             "params": self.params.to_dict(),
@@ -120,6 +121,10 @@ class GuiRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/reset":
             self.server.session.reset()
             self._send_json({"ok": True})
+        elif path == "/api/shutdown":
+            self._send_json({"ok": True, "message": "Server shutting down..."})
+            import threading
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
         else:
             self.send_error(404, "not found")
 

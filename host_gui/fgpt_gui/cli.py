@@ -22,8 +22,14 @@ def build_parser() -> argparse.ArgumentParser:
         prog="fgpt-gui",
         description="Browser chat GUI for the fpGPT FPGA language model.",
     )
-    parser.add_argument("--transport", choices=("mock", "serial"), default="mock",
-                        help="where replies come from (default: mock)")
+    parser.add_argument("--transport", choices=("slm", "mock", "serial"), default="slm",
+                        help="where replies come from (default: slm)")
+    parser.add_argument("--slm-engine", choices=("microgpt", "smollm"), default="microgpt",
+                        help="engine for SLM transport (default: microgpt)")
+    parser.add_argument("--slm-temp", type=float, default=0.8,
+                        help="temperature for SLM sampling (default: 0.8)")
+    parser.add_argument("--slm-top-k", type=int, default=4,
+                        help="top-k sampling for SLM (default: 4)")
     parser.add_argument("--mode", choices=("legacy", "framed"), default="legacy",
                         help="UART link protocol (default: legacy)")
     parser.add_argument("--serial-port", dest="serial_port", default=None,
@@ -55,6 +61,9 @@ def build_parser() -> argparse.ArgumentParser:
 def config_from_args(args) -> GuiConfig:
     config = GuiConfig(
         transport=args.transport,
+        slm_engine=args.slm_engine,
+        slm_temp=args.slm_temp,
+        slm_top_k=args.slm_top_k,
         mode=args.mode,
         port=args.serial_port,
         baud=args.baud,

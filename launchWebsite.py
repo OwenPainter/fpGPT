@@ -42,8 +42,31 @@ def _food_dependency_note() -> str | None:
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    open_browser = "--open" in argv
-    argv = [arg for arg in argv if arg != "--open"]
+
+    # ── Stop running instance if requested ──
+    if "--stop" in argv:
+        import urllib.request
+        port = 8765
+        for i, a in enumerate(argv):
+            if a in ("--http-port", "--port") and i + 1 < len(argv):
+                try:
+                    port = int(argv[i + 1])
+                except ValueError:
+                    pass
+        url = f"http://127.0.0.1:{port}/api/shutdown"
+        try:
+            req = urllib.request.Request(
+                url, data=b"{}", headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                print(f"[launchWebsite] Successfully stopped server at http://127.0.0.1:{port}/")
+                return 0
+        except Exception as exc:
+            print(f"[launchWebsite] Could not reach server at {url}: {exc}")
+            return 1
+
+    no_open = "--no-open" in argv
+    argv = [arg for arg in argv if arg not in ("--open", "--no-open")]
 
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -61,10 +84,15 @@ def main(argv=None) -> int:
     host = "127.0.0.1" if config.http_host in ("", "0.0.0.0") else config.http_host
     url = f"http://{host}:{config.http_port}/"
 
-    if open_browser:
-        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    if not no_open:
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
 
-    print(f"fpGPT host GUI -> {url}")
+    print(f"==================================================")
+    print(f"  fpGPT Web Interface -> {url}")
+    print(f"  LLM Chat   : In-Process SLM ({config.slm_engine} on CPU)")
+    print(f"  Food Photo : hotdog_model.tflite (SeeFood Colab)")
+    print(f"  Controls   : Press Ctrl+C or run 'python launchWebsite.py --stop'")
+    print(f"==================================================")
     note = _food_dependency_note()
     if note:
         print(f"  note: {note}")

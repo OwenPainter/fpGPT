@@ -10,20 +10,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-VALID_TRANSPORTS = ("mock", "serial")
+VALID_TRANSPORTS = ("mock", "serial", "slm")
 VALID_MODES = ("legacy", "framed")
 VALID_MOCK_STYLES = ("echo", "ngram")
+VALID_SLM_ENGINES = ("microgpt", "smollm")
 
 
 @dataclass
 class GuiConfig:
     """Everything the host bridge needs to start."""
 
-    # Link to the board.
-    transport: str = "mock"
+    # Link to the board or local model.
+    transport: str = "slm"
     mode: str = "legacy"
 
-    # Serial transport options (ignored by the mock).
+    # Serial transport options (ignored by mock/slm).
     port: str | None = None
     baud: int | None = None
 
@@ -42,6 +43,11 @@ class GuiConfig:
     mock_style: str = "echo"
     corpus: str | None = None
 
+    # SLM transport options.
+    slm_engine: str = "microgpt"
+    slm_temp: float = 0.8
+    slm_top_k: int = 4
+
     # Local HTTP server.
     http_host: str = "127.0.0.1"
     http_port: int = 8765
@@ -50,6 +56,10 @@ class GuiConfig:
         if self.transport not in VALID_TRANSPORTS:
             raise ValueError(
                 f"transport must be one of {VALID_TRANSPORTS}, got {self.transport!r}"
+            )
+        if self.slm_engine not in VALID_SLM_ENGINES:
+            raise ValueError(
+                f"slm_engine must be one of {VALID_SLM_ENGINES}, got {self.slm_engine!r}"
             )
         if self.mode not in VALID_MODES:
             raise ValueError(f"mode must be one of {VALID_MODES}, got {self.mode!r}")
