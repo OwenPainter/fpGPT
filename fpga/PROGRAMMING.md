@@ -63,8 +63,24 @@ with margin (slow-85C setup slack ~+2.8 ns, Fmax ~75 MHz at `NUM_PES=4`).
 
 ## 3. Program the FPGA (volatile, JTAG)
 
+On Linux the USB-Blaster/DE-SoC needs a udev rule so the device node is
+writable (otherwise `jtagconfig` reports "No JTAG hardware available"):
+
 ```bash
-quartus_pgm -c "USB-Blaster" -m jtag -o "p;output_files/fpGPT.sof"
+sudo tee /etc/udev/rules.d/92-usbblaster.rules >/dev/null <<'EOF'
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="09fb", MODE="0666"
+EOF
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+The DE1-SoC's onboard cable enumerates as **`DE-SoC`** (not `USB-Blaster`) and
+its JTAG chain has two devices: the HPS at index 1 and the FPGA at index 2, so
+the SOF must be targeted at `@2`:
+
+```bash
+export PATH="/home/jcmb/altera_lite/25.1std/quartus/bin:$PATH"
+quartus_pgm -c "DE-SoC" -m jtag -o "p;output_files/fpGPT.sof@2"
 ```
 
 or in the GUI: **Tools → Programmer → Add File → Start**.
