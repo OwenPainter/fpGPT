@@ -4,8 +4,7 @@ Runs local, offline conversational generation on CPU with zero API keys.
 Supported engines:
   - "smollm" (default): HuggingFace SmolLM2-135M-Instruct on CPU for intelligent,
     natural conversational dialogue and Q&A.
-  - "assistant": Fast in-process knowledge responder specialized in fpGPT hardware
-    and SeeFood hot-dog classification.
+  - "assistant": Fast in-process knowledge responder specialized in fpGPT hardware.
   - "microgpt": The repository's PyTorch FPGA-matching model (``checkpoints/micro_gpt.pt``).
   - "echo": Fast deterministic fallback.
 
@@ -204,7 +203,6 @@ class SlmTransport(Transport):
                         "content": (
                             "You are fpGPT Assistant, a knowledgeable AI assistant. "
                             "Give concise, intelligent, conversational answers. "
-                            "When asked about food or hot dogs, offer keen insights. "
                             "When asked about hardware, fpGPT, or FPGAs, explain clearly."
                         ),
                     },
@@ -289,21 +287,8 @@ class SlmTransport(Transport):
             self._pending.append((now + len(reply_bytes) * self.byte_delay, EOT_BYTE))
 
     def _assistant_reply(self, prompt: str) -> str:
-        """Intelligent offline knowledge responder for SeeFood & fpGPT."""
+        """Intelligent offline knowledge responder for fpGPT."""
         low = prompt.lower()
-        if "hot dog" in low or "seefood" in low or "classifier" in low:
-            if "not a hot dog" in low:
-                return (
-                    "Based on the SeeFood model analysis, this image is classified as 'Not a hot dog'. "
-                    "The neural network evaluated key visual features—such as cylindrical sausage geometry, "
-                    "longitudinal bread buns, and typical condiment patterns—and found that the probability fell "
-                    "below the decision threshold. Great test image!"
-                )
-            return (
-                "The SeeFood classifier analyzed your image and identified distinctive hot dog signatures, "
-                "such as bun curvature, sausage texture, and condiment markings. It's a confident detection! "
-                "You can test more photos or explore our FPGA hardware acceleration pipeline."
-            )
         if "fpgpt" in low or "fpga" in low or "taalas" in low or "verilog" in low or "hardware" in low:
             return (
                 "fpGPT is inspired by ChatJimmy and Taalas's vision of baking model weights directly into "
@@ -313,9 +298,9 @@ class SlmTransport(Transport):
         if "hello" in low or "hi" in low or "hey" in low:
             return (
                 "Hello! I am fpGPT Assistant, running fully offline on your CPU with zero cloud dependencies. "
-                "Feel free to ask questions about our hardware design or upload photos in the Food Photo tab!"
+                "Feel free to ask questions about our hardware design."
             )
         return (
             f"I received your question: '{prompt}'. fpGPT combines an in-process Small Language Model "
-            f"with hardware-accelerated transformer arithmetic and computer vision classification."
+            f"with hardware-accelerated transformer arithmetic."
         )

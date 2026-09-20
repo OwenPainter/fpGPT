@@ -1,8 +1,7 @@
 # fpGPT host GUI
 
-A browser UI with two tabs for the DE1-SoC. The **LLM Chat** tab streams
-generated characters from the FPGA over UART. The **Food Photo** tab uploads a
-picture and runs the bundled TFLite hot-dog classifier on the host.
+A browser UI for the DE1-SoC. The **LLM Chat** tab streams
+generated characters from the FPGA over UART.
 
 This folder is self-contained and implements the plan in
 [`../docs/frontend_gui_plan.md`](../docs/frontend_gui_plan.md).
@@ -24,18 +23,7 @@ Then open <http://127.0.0.1:8765/>.
 character n-gram on `data/sample.txt` and samples a deterministic continuation,
 so the UI shows plausible streaming text without a board.
 
-### Food photo tab (optional dependencies)
 
-The classifier needs the TFLite runtime and Pillow, and reads
-`Models/hotdog_model.tflite` by default:
-
-```bash
-pip install -r host_gui/requirements.txt
-python3 host_gui/run.py --food-model Models/hotdog_model.tflite
-```
-
-Without those packages the chat tab still works; the Food Photo tab reports the
-classifier as unavailable.
 
 ## Quick start (real DE1-SoC)
 
@@ -65,15 +53,13 @@ be reconfigured when the model changes. Override with `--board-params PATH`,
 ## How it fits together
 
 ```
-web/ (chat + food tabs)
+web/
    |  SSE /api/events  +  POST /api/prompt, /api/reset
-   |  POST /api/classify (image bytes)
 fgpt_gui/server.py        stdlib HTTP + Server-Sent Events
    |                         |
 fgpt_gui/session.py       generation state machine, input filtering, timeouts
    |                         |
 fgpt_gui/transports/      serial (pyserial) | mock (echo / ngram)
-   |                    fgpt_gui/food_classifier.py  TFLite hot-dog model (host)
 DE1-SoC UART (115200 8N1)
 ```
 
@@ -96,7 +82,6 @@ does not touch `session.py`, `protocol.py`, or the transports.
 | GET | `/api/events` | – | SSE stream of session events |
 | POST | `/api/prompt` | `{"text": "..."}` | `{"ok": bool, "error": ...}` |
 | POST | `/api/reset` | `{}` | `{"ok": true}` |
-| POST | `/api/classify` | raw image bytes (`Content-Type: image/*`) | `{"ok": bool, "label": ..., "probability": ...}` |
 
 ## Tests
 

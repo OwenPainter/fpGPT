@@ -27,19 +27,6 @@ sys.path.insert(0, str(ROOT / "host_gui"))
 from fgpt_gui.cli import build_parser, config_from_args, main as gui_main  # noqa: E402
 
 
-def _food_dependency_note() -> str | None:
-    import importlib.util
-
-    missing = [name for name, module in (("ai-edge-litert", "ai_edge_litert"),
-                                         ("Pillow", "PIL"))
-               if importlib.util.find_spec(module) is None]
-    if missing:
-        return ("Food Photo tab needs " + ", ".join(missing)
-                + " (pip install -r host_gui/requirements.txt); "
-                "the chat tab still works.")
-    return None
-
-
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -90,12 +77,8 @@ def main(argv=None) -> int:
     print(f"==================================================")
     print(f"  fpGPT Web Interface -> {url}")
     print(f"  LLM Chat   : In-Process SLM ({config.slm_engine} on CPU)")
-    print(f"  Food Photo : hotdog_model.tflite (SeeFood Colab)")
     print(f"  Controls   : Press Ctrl+C or run 'python launchWebsite.py --stop'")
     print(f"==================================================")
-    note = _food_dependency_note()
-    if note:
-        print(f"  note: {note}")
 
     return gui_main(argv)
 

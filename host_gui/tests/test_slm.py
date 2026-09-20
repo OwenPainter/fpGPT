@@ -35,9 +35,9 @@ def test_slm_session_natural_conversation():
     t = SlmTransport(engine="assistant", byte_delay=0.0005)
     session = ChatSession(t, params, mode="legacy", gen_tokens=256, reply_timeout=3.0)
 
-    clean, removed = session.sanitize("Hello! Is this a hot dog?")
+    clean, removed = session.sanitize("Hello! How are you?")
     assert len(removed) == 0
-    assert clean == "Hello! Is this a hot dog?"
+    assert clean == "Hello! How are you?"
 
     with session:
         sub = session.subscribe()
@@ -57,6 +57,6 @@ def test_slm_session_natural_conversation():
         assert reply_done is True
         assert len(reply_text) > 10
         assert not reply_text.startswith(" ")
-        assert "hot dog" in reply_text.lower() or "seefood" in reply_text.lower()
+        assert "hello" in reply_text.lower() or "knowledge base" in reply_text.lower() or "how can i help" in reply_text.lower()
         assert session.state == SessionState.IDLE
 

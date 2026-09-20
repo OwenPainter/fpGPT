@@ -31,7 +31,6 @@
       <span class="badge" id="badge-transport">transport: &mdash;</span>
       <span class="badge" id="badge-mode">mode: &mdash;</span>
       <span class="badge" id="badge-model">model: &mdash;</span>
-      <span class="badge" id="badge-food">food: &mdash;</span>
       <span class="dot" id="conn-dot" title="connection"></span>
       <button class="btn-shutdown" id="btn-shutdown" title="Shut down the local server">Stop Server</button>
     </div>
@@ -40,8 +39,6 @@
   <nav class="tabs" role="tablist">
     <button class="tab active" id="tab-chat" role="tab" aria-selected="true"
             aria-controls="panel-chat" data-panel="panel-chat">LLM Chat</button>
-    <button class="tab" id="tab-food" role="tab" aria-selected="false"
-            aria-controls="panel-food" data-panel="panel-food">Food Photo</button>
   </nav>
 
   <section id="panel-chat" class="panel active" role="tabpanel">
@@ -72,33 +69,6 @@
     </footer>
   </section>
 
-  <section id="panel-food" class="panel" role="tabpanel">
-    <div class="food">
-      <h2>Hot dog or not?</h2>
-      <p class="food-lead">
-        Upload a photo and the TFLite model
-        (<code id="food-model-name">hotdog_model.tflite</code>) classifies it.
-        This runs on the host, not the FPGA.
-      </p>
-
-      <div id="dropzone" class="dropzone" tabindex="0">
-        <input type="file" id="food-file" accept="image/*" hidden />
-        <p>Drag &amp; drop a food photo here, or <span class="link">browse</span></p>
-        <p class="dropzone-hint">JPG, PNG, WebP &mdash; up to 12 MB</p>
-      </div>
-
-      <div id="food-preview-wrap" class="preview-wrap hidden">
-        <img id="food-preview" class="preview" alt="Selected food photo" />
-      </div>
-
-      <div id="food-result" class="food-result hidden" aria-live="polite"></div>
-
-      <div class="food-actions">
-        <button id="food-classify" class="primary" disabled>Classify</button>
-        <button id="food-clear" disabled>Clear</button>
-      </div>
-    </div>
-  </section>
 
   <script src="/static/app.js"></script>
 </body>
