@@ -118,6 +118,13 @@ function handleEvent(event) {
 }
 
 function applyConfig(config) {
+  if (config.slm_engine) {
+    const sel = el("model-selector");
+    if (sel && sel.value !== config.slm_engine && config.slm_engine !== "fpga") {
+      sel.value = config.slm_engine;
+    }
+  }
+
   if (config.transport === "slm") {
     badge("badge-transport", "SLM: " + (config.slm_engine || "MicroGPT") + " (Local CPU)");
   } else {
@@ -370,6 +377,34 @@ function subscribe() {
   };
 }
 
+function setupModelSelector() {
+  const selector = el("model-selector");
+  if (!selector) return;
+  selector.addEventListener("change", async () => {
+    const engine = selector.value;
+    if (engine === "fpga") {
+      alert("FPGA Hardware transport is currently a work in progress! Switching back to previous model for now.");
+      selector.value = state.config?.slm_engine || "smollm";
+      return;
+    }
+    
+    addMessage("system", "Switching engine to " + engine + "...", "system");
+    try {
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ engine }),
+      });
+      const data = await response.json();
+      if (!data.ok) {
+        addMessage("system", "Failed to switch engine", "system error");
+      }
+    } catch (err) {
+      addMessage("system", "Failed to switch engine: " + err, "system error");
+    }
+  });
+}
+
 function init() {
   addMessage("system",
     "Connected to the host bridge. Type a prompt; the FPGA streams the reply.",
@@ -403,6 +438,7 @@ function init() {
   }
   setupTabs();
   setupFood();
+  setupModelSelector();
   countInvalid();
   subscribe();
 }

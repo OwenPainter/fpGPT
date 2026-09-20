@@ -129,6 +129,17 @@ class GuiRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "message": "Server shutting down..."})
             import threading
             threading.Thread(target=self.server.shutdown, daemon=True).start()
+        elif path == "/api/settings":
+            engine = str(body.get("engine", ""))
+            if engine:
+                if getattr(self.server.session.transport, "name", "") == "slm":
+                    self.server.session.transport.engine = engine
+                    import threading
+                    threading.Thread(target=self.server.session.transport._ensure_model_loaded, daemon=True).start()
+                self.server.config.slm_engine = engine
+                # Broadcast updated config via SSE
+                self.server.session._emit({"type": "hello", "config": self.server.config_payload(), "state": self.server.session.status_event()})
+            self._send_json({"ok": True})
         else:
             self.send_error(404, "not found")
 

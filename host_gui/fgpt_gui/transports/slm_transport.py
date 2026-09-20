@@ -66,6 +66,8 @@ class SlmTransport(Transport):
         # Model handles
         self._hf_model = None
         self._hf_tokenizer = None
+        self._ts_model = None
+        self._ts_tokenizer = None
         self._micro_model = None
         self._micro_tokenizer = None
         self._load_error: str | None = None
@@ -99,6 +101,21 @@ class SlmTransport(Transport):
                 print("[slm_transport] SmolLM2 loaded successfully.")
             except Exception as exc:
                 self._load_error = f"SmolLM loading error: {exc}"
+                print(f"[slm_transport] WARNING: {self._load_error}. Falling back to assistant engine.")
+                self.engine = "assistant"
+
+        if self.engine == "tinystories" and self._ts_model is None:
+            try:
+                import torch
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+                ts_name = "roneneldan/TinyStories-1M"
+                print(f"[slm_transport] Loading TinyStories model ({ts_name}) on CPU...")
+                self._ts_tokenizer = AutoTokenizer.from_pretrained(ts_name)
+                self._ts_model = AutoModelForCausalLM.from_pretrained(ts_name)
+                self._ts_model.eval()
+                print("[slm_transport] TinyStories loaded successfully.")
+            except Exception as exc:
+                self._load_error = f"TinyStories loading error: {exc}"
                 print(f"[slm_transport] WARNING: {self._load_error}. Falling back to assistant engine.")
                 self.engine = "assistant"
 
@@ -212,8 +229,28 @@ class SlmTransport(Transport):
                 print(f"[slm_transport] SmolLM generation error: {exc}")
                 reply_text = ""
 
+        # 1.5 TinyStories
+        if self.engine == "tinystories" and self._ts_model is not None and self._ts_tokenizer is not None:
+            try:
+                import torch
+                inputs = self._ts_tokenizer(text, return_tensors="pt")
+                with torch.no_grad():
+                    gen_ids = self._ts_model.generate(
+                        **inputs,
+                        max_new_tokens=self.gen_tokens,
+                        temperature=self.temperature,
+                        top_k=self.top_k,
+                        do_sample=True,
+                        pad_token_id=self._ts_tokenizer.eos_token_id,
+                    )
+                new_tokens = gen_ids[0][inputs.input_ids.shape[1]:]
+                reply_text = self._ts_tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+            except Exception as exc:
+                print(f"[slm_transport] TinyStories generation error: {exc}")
+                reply_text = ""
+
         # 2. Assistant Knowledge Engine fallback
-        if not reply_text and (self.engine == "assistant" or self.engine == "smollm"):
+        if not reply_text and (self.engine == "assistant" or self.engine == "smollm" or self.engine == "tinystories"):
             reply_text = self._assistant_reply(text)
 
         # 3. MicroGPT hardware toy model
