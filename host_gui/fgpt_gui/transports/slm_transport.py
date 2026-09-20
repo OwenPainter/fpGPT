@@ -97,9 +97,15 @@ class SlmTransport(Transport):
                 self.engine = "microgpt"
 
         if self.engine == "microgpt" and self._micro_model is None:
-            import torch
-            from model.micro_gpt import MicroGPT
-            from model.tokenizer import CharTokenizer
+            try:
+                import torch
+                from model.micro_gpt import MicroGPT
+                from model.tokenizer import CharTokenizer
+            except ImportError as exc:
+                self._load_error = f"PyTorch is not installed in this Python ({sys.executable}): {exc}"
+                print(f"[slm_transport] WARNING: {self._load_error}. Falling back to mock echo.")
+                self.engine = "fallback"
+                return
 
             if not self.checkpoint_path.is_file():
                 raise TransportError(f"MicroGPT checkpoint not found: {self.checkpoint_path}")
@@ -197,6 +203,12 @@ class SlmTransport(Transport):
             except Exception as exc:
                 err_msg = f" [SLM error: {exc}] "
                 reply_chars = [ord(c) for c in err_msg]
+
+        if not reply_chars:
+            fallback_text = (
+                f"[PyTorch unavailable in this python executable. Run with: python launchWebsite.py] Echo: {text.upper()}"
+            )
+            reply_chars = [ord(c) for c in fallback_text[: self.gen_tokens] if ord(c) < 256]
 
         # Queue generated characters with pacing timestamps for smooth streaming
         now = time.monotonic()
