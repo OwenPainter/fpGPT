@@ -34,6 +34,10 @@ class GuiConfig:
     # Where to find the compiler-generated parameter contract.
     board_params: str | None = None
 
+    # TFLite model for the "food photo" tab (hot-dog classifier).
+    # ``None`` uses the bundled Models/hotdog_model.tflite.
+    food_model: str | None = None
+
     # Mock transport options.
     mock_style: str = "echo"
     corpus: str | None = None

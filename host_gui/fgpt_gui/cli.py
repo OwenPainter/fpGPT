@@ -36,6 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="reply inactivity timeout in seconds (default: 5)")
     parser.add_argument("--board-params", default=None,
                         help="path to board_params.vh (default: auto-discover)")
+    parser.add_argument("--food-model", dest="food_model", default=None,
+                        help="TFLite hot-dog model for the food tab "
+                             "(default: Models/hotdog_model.tflite)")
     parser.add_argument("--mock-style", choices=("echo", "ngram"), default="echo",
                         help="mock reply style (default: echo)")
     parser.add_argument("--corpus", default=None,
@@ -58,6 +61,7 @@ def config_from_args(args) -> GuiConfig:
         gen_tokens=args.gen_tokens,
         timeout_s=args.timeout,
         board_params=args.board_params,
+        food_model=args.food_model,
         mock_style=args.mock_style,
         corpus=args.corpus,
         http_host=args.host,

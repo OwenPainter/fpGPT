@@ -7,3 +7,8 @@
 #
 # pyserial is required only for --transport serial (a real DE1-SoC over UART).
 pyserial>=3.5
+
+# Required only for the "Food Photo" tab (TFLite hot-dog classifier).
+# The chat UI and its tests still run on the standard library alone.
+ai-edge-litert>=2.1
+Pillow>=9.5

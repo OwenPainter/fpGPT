@@ -20,6 +20,8 @@ const state = {
   busy: false,
   current: null, // { node, text }
   transcript: [], // { role, text }
+  foodFile: null,
+  foodBusy: false,
 };
 
 function badge(id, text) {
@@ -121,10 +123,25 @@ function applyConfig(config) {
   badge("badge-mode", "mode: " + config.mode);
   state.genTokens = config.gen_tokens;
   if (config.params) applyParams(config.params);
+  applyFoodConfig(config.food);
   if (config.warnings && config.warnings.length) {
     config.warnings.forEach((w) => addMessage("system", "warning: " + w, "system"));
   }
   el("gen-info").textContent = "reply length: " + config.gen_tokens + " chars";
+}
+
+function applyFoodConfig(food) {
+  state.food = food || { available: false };
+  if (state.food.model) {
+    el("food-model-name").textContent = state.food.model;
+  }
+  if (state.food.available) {
+    badge("badge-food", "food: " + (state.food.model || "ready"));
+    el("food-classify").title = "";
+  } else {
+    badge("badge-food", "food: unavailable");
+    el("food-classify").title = state.food.error || "classifier unavailable";
+  }
 }
 
 function applyParams(params) {
@@ -198,6 +215,130 @@ function exportTranscript() {
   URL.revokeObjectURL(url);
 }
 
+// ── tabs ──
+function setActiveTab(panelId) {
+  document.querySelectorAll(".tab").forEach((tab) => {
+    const active = tab.dataset.panel === panelId;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll(".panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.id === panelId);
+  });
+}
+
+function setupTabs() {
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => setActiveTab(tab.dataset.panel));
+  });
+}
+
+// ── food photo tab ──
+function setFoodResult(html, cls) {
+  const node = el("food-result");
+  node.className = "food-result " + (cls || "");
+  node.innerHTML = html;
+  node.classList.remove("hidden");
+}
+
+function clearFood() {
+  if (state.foodFile && el("food-preview").src) {
+    URL.revokeObjectURL(el("food-preview").src);
+  }
+  state.foodFile = null;
+  el("food-file").value = "";
+  el("food-preview").src = "";
+  el("food-preview-wrap").classList.add("hidden");
+  el("food-result").classList.add("hidden");
+  el("food-classify").disabled = true;
+  el("food-clear").disabled = true;
+}
+
+function selectFoodFile(file) {
+  if (!file) return;
+  if (!file.type || !file.type.startsWith("image/")) {
+    setFoodResult("Please choose an image file.", "error");
+    return;
+  }
+  state.foodFile = file;
+  const url = URL.createObjectURL(file);
+  const preview = el("food-preview");
+  preview.src = url;
+  el("food-preview-wrap").classList.remove("hidden");
+  el("food-result").classList.add("hidden");
+  el("food-classify").disabled = false;
+  el("food-clear").disabled = false;
+}
+
+function foodScoreHtml(result) {
+  const pct = Math.round(result.probability * 1000) / 10;
+  const conf = Math.round(result.confidence * 1000) / 10;
+  return `
+    <div class="verdict">
+      <span class="label">${result.label}</span>
+      <span class="score">${conf}% confident</span>
+    </div>
+    <div class="bar"><span style="width:${pct}%"></span></div>
+    <div class="note">P(hot dog) = ${result.probability.toFixed(4)}
+      &middot; threshold ${result.threshold} &middot; ${result.model}</div>`;
+}
+
+async function classifyFood() {
+  if (!state.foodFile || state.foodBusy) return;
+  state.foodBusy = true;
+  el("food-classify").disabled = true;
+  setFoodResult("Analyzing&hellip;", "pending");
+  try {
+    const response = await fetch("/api/classify", {
+      method: "POST",
+      headers: { "Content-Type": state.foodFile.type || "application/octet-stream" },
+      body: state.foodFile,
+    });
+    const data = await response.json();
+    if (!data.ok) {
+      setFoodResult("Error: " + (data.error || "classification failed"), "error");
+    } else {
+      setFoodResult(foodScoreHtml(data), data.is_hotdog ? "hotdog" : "nothotdog");
+    }
+  } catch (err) {
+    setFoodResult("Request failed: " + err, "error");
+  } finally {
+    state.foodBusy = false;
+    el("food-classify").disabled = !state.foodFile;
+  }
+}
+
+function setupFood() {
+  const dropzone = el("dropzone");
+  const input = el("food-file");
+  dropzone.addEventListener("click", () => input.click());
+  dropzone.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      input.click();
+    }
+  });
+  input.addEventListener("change", () => selectFoodFile(input.files[0]));
+  ["dragenter", "dragover"].forEach((name) => {
+    dropzone.addEventListener(name, (event) => {
+      event.preventDefault();
+      dropzone.classList.add("dragover");
+    });
+  });
+  ["dragleave", "drop"].forEach((name) => {
+    dropzone.addEventListener(name, (event) => {
+      event.preventDefault();
+      dropzone.classList.remove("dragover");
+    });
+  });
+  dropzone.addEventListener("drop", (event) => {
+    const file = event.dataTransfer.files && event.dataTransfer.files[0];
+    selectFoodFile(file);
+  });
+  el("food-classify").addEventListener("click", classifyFood);
+  el("food-clear").addEventListener("click", clearFood);
+}
+
 function subscribe() {
   const events = new EventSource("/api/events");
   events.onopen = () => setConnected(true);
@@ -225,6 +366,8 @@ function init() {
       sendPrompt();
     }
   });
+  setupTabs();
+  setupFood();
   countInvalid();
   subscribe();
 }
